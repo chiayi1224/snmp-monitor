@@ -1,0 +1,56 @@
+package com.example.snmp.config;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Trap OID 對應設定
+ *
+ * 每一筆代表一組 TRIGGERED/RESOLVED 的對應關係。
+ * OID 確認後直接修改常數即可，程式其他地方不用動。
+ *
+ * snmpTrapOID.0 的 OID = 1.3.6.1.6.3.1.1.4.1.0
+ * trap 收到後從這個 VarBind 取出 trapOID，再來這裡查對應。
+ */
+public class TrapOidMapping {
+
+    // ═══════════════════════════════════════════════════════════════
+    //  ★ 待確認的 OID — 確認後直接改這裡
+    // ═══════════════════════════════════════════════════════════════
+
+    // CPU 超過閾值
+    private static final String CPU_TRIGGERED = "1.3.6.1.4.1.TODO.cpu.triggered";
+    private static final String CPU_RESOLVED  = "1.3.6.1.4.1.TODO.cpu.resolved";   // null = 無 resolved trap
+
+    // Memory 超過閾值
+    private static final String MEM_TRIGGERED = "1.3.6.1.4.1.TODO.mem.triggered";
+    private static final String MEM_RESOLVED  = "1.3.6.1.4.1.TODO.mem.resolved";
+
+    // Disk 超過閾值
+    private static final String DISK_TRIGGERED = "1.3.6.1.4.1.TODO.disk.triggered";
+    private static final String DISK_RESOLVED  = "1.3.6.1.4.1.TODO.disk.resolved";
+
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * 單一 OID 對應規則
+     *
+     * @param triggeredOid  代表「告警發生」的 trap OID
+     * @param resolvedOid   代表「告警恢復」的 trap OID（null = 該指標沒有 resolved trap）
+     * @param metricName    對應的指標名稱（對應 alert_events.metric_name）
+     */
+    public record Mapping(String triggeredOid, String resolvedOid, String metricName) {
+        public boolean hasResolved() { return resolvedOid != null; }
+    }
+
+    /**
+     * 回傳所有預設的 OID 對應清單
+     */
+    public static List<Mapping> defaults() {
+        List<Mapping> list = new ArrayList<>();
+        list.add(new Mapping(CPU_TRIGGERED,  CPU_RESOLVED,  "cpu"));
+        list.add(new Mapping(MEM_TRIGGERED,  MEM_RESOLVED,  "memory"));
+        list.add(new Mapping(DISK_TRIGGERED, DISK_RESOLVED, "disk"));
+        return list;
+    }
+}

@@ -1,0 +1,25 @@
+# Maven
+target/
+*.jar
+*.war
+
+# SQLite DB（執行時產生，不要 commit）
+*.db
+*.db-shm
+*.db-wal
+
+# Log
+logs/
+*.log
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
