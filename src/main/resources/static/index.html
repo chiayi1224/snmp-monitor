@@ -257,6 +257,15 @@ async function logout() {
 // ── 共用工具 ──────────────────────────────────────────────────────
 function closeDialog(id) { $(id).close(); }
 
+// HTML 跳脫：伺服器回傳的字串一律經此處理後才可放入 innerHTML，防止 XSS
+function esc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// 產生可安全放入 onclick="..." 屬性的 JS 參數（JSON 字面值再做 HTML 跳脫）
+function jsArg(v) { return esc(JSON.stringify(v)); }
+
 function pctBar(pct) {
   const p = pct.toFixed(1);
   const color = pct >= 90 ? '#e53935' : pct >= 75 ? '#fb8c00' : '#43a047';
@@ -271,10 +280,10 @@ async function loadStatus() {
   const tb = $('status-body');
   if (!data.length) { tb.innerHTML = '<tr><td colspan="4" style="color:#aaa">尚無資料</td></tr>'; return; }
   tb.innerHTML = data.map(d => `<tr>
-    <td><strong>${d.deviceName}</strong></td>
+    <td><strong>${esc(d.deviceName)}</strong></td>
     <td>${d.cpu ? pctBar(d.cpu.usedPct) : '—'}</td>
     <td>${d.memory ? pctBar(d.memory.usedPct) : '—'}</td>
-    <td>${d.disks && d.disks.length ? d.disks.map(k => `${k.mountPoint} ${pctBar(k.usedPct)}`).join('<br>') : '—'}</td>
+    <td>${d.disks && d.disks.length ? d.disks.map(k => `${esc(k.mountPoint)} ${pctBar(k.usedPct)}`).join('<br>') : '—'}</td>
   </tr>`).join('');
 }
 
@@ -286,12 +295,12 @@ async function loadDevices() {
   const tb = $('devices-body');
   if (!data.length) { tb.innerHTML = '<tr><td colspan="6" style="color:#aaa">尚無設備</td></tr>'; return; }
   tb.innerHTML = data.map(d => `<tr>
-    <td><strong>${d.name}</strong></td><td>${d.host}</td><td>${d.port}</td>
-    <td><code>${d.community}</code></td>
+    <td><strong>${esc(d.name)}</strong></td><td>${esc(d.host)}</td><td>${esc(d.port)}</td>
+    <td><code>${esc(d.community)}</code></td>
     <td><span class="badge ${d.enabled ? 'ok' : 'off'}">${d.enabled ? '啟用' : '停用'}</span></td>
     <td>
-      <button class="btn btn-sm btn-primary" onclick='openDeviceDialog(${JSON.stringify(d)})'>編輯</button>
-      <button class="btn btn-sm btn-danger"  onclick="deleteDevice('${d.name}')">刪除</button>
+      <button class="btn btn-sm btn-primary" onclick="openDeviceDialog(${jsArg(d)})">編輯</button>
+      <button class="btn btn-sm btn-danger"  onclick="deleteDevice(${jsArg(d.name)})">刪除</button>
     </td>
   </tr>`).join('');
 }
@@ -337,9 +346,9 @@ async function loadAlerts() {
   const tb = $('alerts-body');
   if (!data.length) { tb.innerHTML = '<tr><td colspan="6" style="color:#aaa">尚無記錄</td></tr>'; return; }
   tb.innerHTML = data.map(a => `<tr>
-    <td style="white-space:nowrap">${a.ts.replace('T',' ').substring(0,19)}</td>
-    <td>${a.deviceName}</td><td>${a.metricName}</td>
-    <td class="${a.eventType==='TRIGGERED'?'alert-triggered':'alert-resolved'}">${a.eventType}</td>
+    <td style="white-space:nowrap">${esc(a.ts.replace('T',' ').substring(0,19))}</td>
+    <td>${esc(a.deviceName)}</td><td>${esc(a.metricName)}</td>
+    <td class="${a.eventType==='TRIGGERED'?'alert-triggered':'alert-resolved'}">${esc(a.eventType)}</td>
     <td>${a.value.toFixed(1)}%</td><td>${a.thresholdVal.toFixed(1)}%</td>
   </tr>`).join('');
 }
@@ -350,14 +359,14 @@ async function loadUsers() {
   const tb = $('users-body');
   if (!data.length) { tb.innerHTML = '<tr><td colspan="5" style="color:#aaa">尚無帳號</td></tr>'; return; }
   tb.innerHTML = data.map(u => `<tr>
-    <td><strong>${u.username}</strong></td>
-    <td>${u.role}</td>
+    <td><strong>${esc(u.username)}</strong></td>
+    <td>${esc(u.role)}</td>
     <td><span class="badge ${u.enabled ? 'ok' : 'off'}">${u.enabled ? '啟用' : '停用'}</span></td>
-    <td style="font-size:.8rem;color:#aaa">${u.created.substring(0,10)}</td>
+    <td style="font-size:.8rem;color:#aaa">${esc(u.created.substring(0,10))}</td>
     <td>
-      <button class="btn btn-sm btn-primary" onclick='openUserDialog(${JSON.stringify(u)})'>編輯</button>
-      <button class="btn btn-sm" style="background:#546e7a;color:#fff" onclick="openPwdDialog(${u.id})">改密碼</button>
-      <button class="btn btn-sm btn-danger" onclick="deleteUser(${u.id},'${u.username}')">刪除</button>
+      <button class="btn btn-sm btn-primary" onclick="openUserDialog(${jsArg(u)})">編輯</button>
+      <button class="btn btn-sm" style="background:#546e7a;color:#fff" onclick="openPwdDialog(${jsArg(u.id)})">改密碼</button>
+      <button class="btn btn-sm btn-danger" onclick="deleteUser(${jsArg(u.id)},${jsArg(u.username)})">刪除</button>
     </td>
   </tr>`).join('');
 }
@@ -417,13 +426,13 @@ async function loadTokens() {
   const tb = $('tokens-body');
   if (!data.length) { tb.innerHTML = '<tr><td colspan="6" style="color:#aaa">尚無 Token</td></tr>'; return; }
   tb.innerHTML = data.map(t => `<tr>
-    <td>${t.description}</td>
+    <td>${esc(t.description)}</td>
     <td><span class="badge ${t.enabled ? 'ok' : 'off'}">${t.enabled ? '啟用' : '停用'}</span></td>
-    <td>${t.expiresAt ? t.expiresAt.substring(0,10) : '永不過期'}</td>
-    <td>${t.lastUsedAt ? t.lastUsedAt.substring(0,19).replace('T',' ') : '—'}</td>
-    <td>${t.createdAt ? t.createdAt.substring(0,19).replace('T',' ') : '—'}</td>
+    <td>${t.expiresAt ? esc(t.expiresAt.substring(0,10)) : '永不過期'}</td>
+    <td>${t.lastUsedAt ? esc(t.lastUsedAt.substring(0,19).replace('T',' ')) : '—'}</td>
+    <td>${t.createdAt ? esc(t.createdAt.substring(0,19).replace('T',' ')) : '—'}</td>
     <td>
-      <button class="btn btn-sm btn-danger" onclick="deleteToken(${t.id},'${t.description}')">撤銷</button>
+      <button class="btn btn-sm btn-danger" onclick="deleteToken(${jsArg(t.id)},${jsArg(t.description)})">撤銷</button>
     </td>
   </tr>`).join('');
 }
@@ -484,14 +493,14 @@ async function loadAudit() {
   const tb = $('audit-body');
   if (!data.length) { tb.innerHTML = '<tr><td colspan="8" style="color:#aaa">尚無記錄</td></tr>'; return; }
   tb.innerHTML = data.map(a => `<tr>
-    <td style="white-space:nowrap">${(a.ts||'').substring(0,19).replace('T',' ')}</td>
-    <td><code>${a.eventType||''}</code></td>
-    <td>${a.actor||'—'}</td>
-    <td>${a.sourceIp||'—'}</td>
-    <td>${a.method||'—'}</td>
-    <td style="font-size:.8rem">${a.path||'—'}</td>
-    <td>${a.status||'—'}</td>
-    <td style="font-size:.8rem">${a.detail||''}</td>
+    <td style="white-space:nowrap">${esc((a.ts||'').substring(0,19).replace('T',' '))}</td>
+    <td><code>${esc(a.eventType)}</code></td>
+    <td>${esc(a.actor||'—')}</td>
+    <td>${esc(a.sourceIp||'—')}</td>
+    <td>${esc(a.method||'—')}</td>
+    <td style="font-size:.8rem">${esc(a.path||'—')}</td>
+    <td>${esc(a.status||'—')}</td>
+    <td style="font-size:.8rem">${esc(a.detail)}</td>
   </tr>`).join('');
 }
 
