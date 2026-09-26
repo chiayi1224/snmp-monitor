@@ -50,7 +50,13 @@ JettyServer (8080) ◄───────────────────�
 
 ### 持久化 (SQLite)
 
-`MetricStore` 負責建立 schema（首次啟動自動建表）、BCrypt 密碼驗證，以及儲存 `cpu_metrics`、`mem_metrics`、`disk_metrics`、`alert_events`。
+`MetricStore` 是對外統一入口（facade），負責開啟連線、建立 schema 並寫入預設資料，公開方法皆委派給 `storage` 套件內的各 Repository（package-private）：
+
+- `Db`：JDBC 共用工具（參數綁定、ResultSet 關閉、`RowMapper`）
+- `SchemaManager`：建表 DDL 與既有 DB 欄位遷移
+- `UserRepository`、`DeviceRepository`、`MetricRepository`、`AlertRepository`、`TrapRepository`、`PollOidRepository`、`SettingsRepository`、`ThresholdRepository`、`V3UserRepository`、`ApiTokenRepository`、`AuditLogRepository`：各自負責對應資料表
+
+新增資料表時：DDL 加到 `SchemaManager`，SQL 寫在新的 Repository，再於 `MetricStore` 新增委派方法。
 
 **預設帳號：** `admin` / `admin`（首次登入需強制改密碼）
 
