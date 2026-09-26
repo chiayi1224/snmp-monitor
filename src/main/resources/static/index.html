@@ -44,6 +44,7 @@
   .alert-triggered { color: #c62828; font-weight: 600; }
   .alert-resolved  { color: #2e7d32; }
   .hint { font-size: .8rem; color: #e65100; margin-top: 4px; }
+  footer { text-align: center; padding: 16px; font-size: .75rem; color: #bbb; margin-top: 24px; }
 </style>
 </head>
 <body>
@@ -56,6 +57,8 @@
     <button onclick="showTab('devices', this)">設備管理</button>
     <button onclick="showTab('alerts', this)">告警記錄</button>
     <button onclick="showTab('users', this)">帳號管理</button>
+    <button onclick="showTab('tokens', this)">API Token</button>
+    <button onclick="showTab('audit', this)">稽核日誌</button>
     <span class="user-info" id="user-info"></span>
     <button class="btn-logout" onclick="logout()">登出</button>
   </nav>
@@ -102,6 +105,39 @@
     <table>
       <thead><tr><th>帳號</th><th>角色</th><th>狀態</th><th>建立時間</th><th>操作</th></tr></thead>
       <tbody id="users-body"><tr><td colspan="5" style="color:#aaa">載入中...</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- API Token 管理 -->
+  <section id="tab-tokens">
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="openTokenDialog()">＋ 產生 Token</button>
+    </div>
+    <h2>API Token 清單（Token 明文僅在產生時顯示一次）</h2>
+    <table>
+      <thead><tr><th>說明</th><th>狀態</th><th>到期日</th><th>最後使用</th><th>建立時間</th><th>操作</th></tr></thead>
+      <tbody id="tokens-body"><tr><td colspan="6" style="color:#aaa">載入中...</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- 稽核日誌 -->
+  <section id="tab-audit">
+    <div class="toolbar" style="gap:8px;justify-content:flex-start">
+      <select id="audit-event-filter" style="width:160px;padding:6px;border:1px solid #ccc;border-radius:4px;font-size:.85rem">
+        <option value="">全部事件</option>
+        <option value="LOGIN_SUCCESS">LOGIN_SUCCESS</option>
+        <option value="LOGIN_FAIL">LOGIN_FAIL</option>
+        <option value="LOGOUT">LOGOUT</option>
+        <option value="TOKEN_USED">TOKEN_USED</option>
+        <option value="TOKEN_FAIL">TOKEN_FAIL</option>
+        <option value="API_WRITE">API_WRITE</option>
+      </select>
+      <button class="btn btn-primary" onclick="loadAudit()">查詢</button>
+    </div>
+    <h2>稽核日誌</h2>
+    <table>
+      <thead><tr><th>時間</th><th>事件</th><th>操作者</th><th>來源 IP</th><th>方法</th><th>路徑</th><th>狀態</th><th>說明</th></tr></thead>
+      <tbody id="audit-body"><tr><td colspan="8" style="color:#aaa">載入中...</td></tr></tbody>
     </table>
   </section>
 
@@ -159,6 +195,32 @@
   </div>
 </dialog>
 
+<!-- Token 產生 Dialog -->
+<dialog id="token-dialog">
+  <div class="dialog-header">產生 API Token</div>
+  <div class="dialog-body">
+    <label>說明 * <input type="text" id="t-description" placeholder="Grafana 查詢用"></label>
+    <label>到期日（選填）<input type="text" id="t-expires" placeholder="2027-01-01T00:00:00Z"></label>
+  </div>
+  <div class="dialog-footer">
+    <button class="btn" onclick="closeDialog('token-dialog')">取消</button>
+    <button class="btn btn-primary" onclick="createToken()">產生</button>
+  </div>
+</dialog>
+
+<!-- Token 顯示 Dialog（一次性） -->
+<dialog id="token-show-dialog">
+  <div class="dialog-header">請複製並儲存 Token</div>
+  <div class="dialog-body">
+    <p style="font-size:.85rem;color:#e65100;margin-bottom:8px">⚠️ 此 Token 僅顯示一次，關閉後無法再查看</p>
+    <label>Token<textarea id="t-value" rows="3" style="width:100%;font-family:monospace;font-size:.8rem;padding:8px;border:1px solid #ccc;border-radius:4px;resize:none" readonly></textarea></label>
+    <button class="btn btn-primary" style="margin-top:4px" onclick="copyToken()">複製</button>
+  </div>
+  <div class="dialog-footer">
+    <button class="btn btn-primary" onclick="closeDialog('token-show-dialog');loadTokens()">關閉</button>
+  </div>
+</dialog>
+
 <script>
 const $ = id => document.getElementById(id);
 
@@ -182,6 +244,8 @@ function showTab(name, btn) {
   if (name === 'devices') loadDevices();
   if (name === 'alerts')  loadAlerts();
   if (name === 'users')   loadUsers();
+  if (name === 'tokens') loadTokens();
+  if (name === 'audit')  loadAudit();
 }
 
 // ── 登出 ──────────────────────────────────────────────────────────
@@ -201,7 +265,9 @@ function pctBar(pct) {
 
 // ── 狀態 ─────────────────────────────────────────────────────────
 async function loadStatus() {
-  const data = await fetch('/api/status').then(r => r.json()).catch(() => []);
+  const data = await fetch('/api/v1/status',
+    { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' })
+    .then(r => r.json()).catch(() => []);
   const tb = $('status-body');
   if (!data.length) { tb.innerHTML = '<tr><td colspan="4" style="color:#aaa">尚無資料</td></tr>'; return; }
   tb.innerHTML = data.map(d => `<tr>
@@ -214,7 +280,9 @@ async function loadStatus() {
 
 // ── 設備管理 ──────────────────────────────────────────────────────
 async function loadDevices() {
-  const data = await fetch('/api/devices').then(r => r.json()).catch(() => []);
+  const data = await fetch('/api/v1/devices',
+    { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' })
+    .then(r => r.json()).catch(() => []);
   const tb = $('devices-body');
   if (!data.length) { tb.innerHTML = '<tr><td colspan="6" style="color:#aaa">尚無設備</td></tr>'; return; }
   tb.innerHTML = data.map(d => `<tr>
@@ -223,15 +291,16 @@ async function loadDevices() {
     <td><span class="badge ${d.enabled ? 'ok' : 'off'}">${d.enabled ? '啟用' : '停用'}</span></td>
     <td>
       <button class="btn btn-sm btn-primary" onclick='openDeviceDialog(${JSON.stringify(d)})'>編輯</button>
-      <button class="btn btn-sm btn-danger"  onclick="deleteDevice(${d.id},'${d.name}')">刪除</button>
+      <button class="btn btn-sm btn-danger"  onclick="deleteDevice('${d.name}')">刪除</button>
     </td>
   </tr>`).join('');
 }
 
 function openDeviceDialog(d = null) {
   $('device-dialog-title').textContent = d ? '編輯設備' : '新增設備';
-  $('d-id').value        = d ? d.id : '';
+  $('d-id').value        = d ? d.name : '';    // 儲存原始名稱作為路由識別
   $('d-name').value      = d ? d.name : '';
+  $('d-name').disabled   = !!d;                // 編輯時名稱不可更改
   $('d-host').value      = d ? d.host : '';
   $('d-port').value      = d ? d.port : 161;
   $('d-community').value = d ? d.community : 'public';
@@ -240,27 +309,31 @@ function openDeviceDialog(d = null) {
 }
 
 async function saveDevice() {
-  const id   = $('d-id').value;
+  const origName = $('d-id').value;
   const body = { name: $('d-name').value.trim(), host: $('d-host').value.trim(),
                  port: parseInt($('d-port').value), community: $('d-community').value.trim(),
                  enabled: $('d-enabled').checked };
   if (!body.name || !body.host) { alert('名稱和 IP 為必填'); return; }
-  const res = await fetch(id ? `/api/devices/${id}` : '/api/devices',
-    { method: id ? 'PUT' : 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  // 新增：POST /api/devices；更新：POST /api/devices/{name}
+  const url = origName ? `/api/admin/devices/${encodeURIComponent(origName)}` : '/api/admin/devices';
+  const res = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
   if (res.ok) { closeDialog('device-dialog'); loadDevices(); }
   else { const e = await res.json(); alert(e.error || '儲存失敗'); }
 }
 
-async function deleteDevice(id, name) {
+async function deleteDevice(name) {
   if (!confirm(`確定要刪除「${name}」嗎？`)) return;
-  const res = await fetch(`/api/devices/${id}`, { method: 'DELETE' });
+  const res = await fetch(`/api/admin/devices/${encodeURIComponent(name)}`,
+    { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({action:'delete'}) });
   if (res.ok) loadDevices();
   else alert('刪除失敗');
 }
 
 // ── 告警記錄 ──────────────────────────────────────────────────────
 async function loadAlerts() {
-  const data = await fetch('/api/alerts?limit=100').then(r => r.json()).catch(() => []);
+  const data = await fetch('/api/v1/alerts',
+    { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({limit:100}) })
+    .then(r => r.json()).catch(() => []);
   const tb = $('alerts-body');
   if (!data.length) { tb.innerHTML = '<tr><td colspan="6" style="color:#aaa">尚無記錄</td></tr>'; return; }
   tb.innerHTML = data.map(a => `<tr>
@@ -273,7 +346,7 @@ async function loadAlerts() {
 
 // ── 帳號管理 ──────────────────────────────────────────────────────
 async function loadUsers() {
-  const data = await fetch('/api/users').then(r => r.json()).catch(() => []);
+  const data = await fetch('/api/admin/users').then(r => r.json()).catch(() => []);
   const tb = $('users-body');
   if (!data.length) { tb.innerHTML = '<tr><td colspan="5" style="color:#aaa">尚無帳號</td></tr>'; return; }
   tb.innerHTML = data.map(u => `<tr>
@@ -306,7 +379,7 @@ async function saveUser() {
   if (!id) body.password = $('u-password').value;
   if (!body.username) { alert('帳號為必填'); return; }
   if (!id && (!body.password || body.password.length < 6)) { alert('密碼至少 6 字元'); return; }
-  const res = await fetch(id ? `/api/users/${id}` : '/api/users',
+  const res = await fetch(id ? `/api/admin/users/${id}` : '/api/admin/users',
     { method: id ? 'PUT' : 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
   if (res.ok) { closeDialog('user-dialog'); loadUsers(); }
   else { const e = await res.json(); alert(e.error || '儲存失敗'); }
@@ -326,7 +399,7 @@ async function savePassword() {
   const cfm = $('pwd-confirm').value;
   if (pwd.length < 6)  { $('pwd-hint').textContent = '密碼至少 6 字元'; return; }
   if (pwd !== cfm)     { $('pwd-hint').textContent = '兩次密碼不一致'; return; }
-  const res = await fetch(`/api/users/${id}/password`,
+  const res = await fetch(`/api/admin/users/${id}/password`,
     { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ password: pwd }) });
   if (res.ok) { closeDialog('pwd-dialog'); alert('密碼已更新'); }
   else { const e = await res.json(); alert(e.error || '更新失敗'); }
@@ -334,10 +407,99 @@ async function savePassword() {
 
 async function deleteUser(id, username) {
   if (!confirm(`確定要刪除帳號「${username}」嗎？`)) return;
-  const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
+  const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
   if (res.ok) loadUsers();
   else { const e = await res.json(); alert(e.error || '刪除失敗'); }
 }
+// ── API Token 管理 ───────────────────────────────────────────────
+async function loadTokens() {
+  const data = await fetch('/api/admin/tokens').then(r => r.json()).catch(() => []);
+  const tb = $('tokens-body');
+  if (!data.length) { tb.innerHTML = '<tr><td colspan="6" style="color:#aaa">尚無 Token</td></tr>'; return; }
+  tb.innerHTML = data.map(t => `<tr>
+    <td>${t.description}</td>
+    <td><span class="badge ${t.enabled ? 'ok' : 'off'}">${t.enabled ? '啟用' : '停用'}</span></td>
+    <td>${t.expiresAt ? t.expiresAt.substring(0,10) : '永不過期'}</td>
+    <td>${t.lastUsedAt ? t.lastUsedAt.substring(0,19).replace('T',' ') : '—'}</td>
+    <td>${t.createdAt ? t.createdAt.substring(0,19).replace('T',' ') : '—'}</td>
+    <td>
+      <button class="btn btn-sm btn-danger" onclick="deleteToken(${t.id},'${t.description}')">撤銷</button>
+    </td>
+  </tr>`).join('');
+}
+
+function openTokenDialog() {
+  $('t-description').value = '';
+  $('t-expires').value = '';
+  $('token-dialog').showModal();
+}
+
+async function createToken() {
+  const description = $('t-description').value.trim();
+  const expiresAt   = $('t-expires').value.trim() || null;
+  if (!description) { alert('說明為必填'); return; }
+  const res = await fetch('/api/admin/tokens', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ description, expiresAt })
+  });
+  if (res.ok) {
+    const data = await res.json();
+    closeDialog('token-dialog');
+    $('t-value').value = data.token;
+    $('token-show-dialog').showModal();
+  } else {
+    const e = await res.json();
+    alert(e.error || '產生失敗');
+  }
+}
+
+function copyToken() {
+  const val = $('t-value').value;
+  navigator.clipboard.writeText(val).then(() => alert('已複製到剪貼簿'));
+}
+
+async function deleteToken(id, description) {
+  if (!confirm(`確定要撤銷 Token「${description}」嗎？撤銷後使用該 Token 的程式將無法呼叫 API。`)) return;
+  const res = await fetch(`/api/admin/tokens/${id}`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({action:'delete'})
+  });
+  if (res.ok) loadTokens();
+  else alert('撤銷失敗');
+}
+
+// ── 稽核日誌 ─────────────────────────────────────────────────────
+async function loadAudit() {
+  const eventType = $('audit-event-filter').value;
+  const body = {};
+  if (eventType) body.eventType = eventType;
+  body.limit = 200;
+  const data = await fetch('/api/admin/audit-logs', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  }).then(r => r.json()).catch(() => []);
+  const tb = $('audit-body');
+  if (!data.length) { tb.innerHTML = '<tr><td colspan="8" style="color:#aaa">尚無記錄</td></tr>'; return; }
+  tb.innerHTML = data.map(a => `<tr>
+    <td style="white-space:nowrap">${(a.ts||'').substring(0,19).replace('T',' ')}</td>
+    <td><code>${a.eventType||''}</code></td>
+    <td>${a.actor||'—'}</td>
+    <td>${a.sourceIp||'—'}</td>
+    <td>${a.method||'—'}</td>
+    <td style="font-size:.8rem">${a.path||'—'}</td>
+    <td>${a.status||'—'}</td>
+    <td style="font-size:.8rem">${a.detail||''}</td>
+  </tr>`).join('');
+}
+
+// ── 版本資訊 ──────────────────────────────────────────────────────
+fetch('/api/info').then(r => r.json()).then(info => {
+  $('app-version').textContent = `${info.title} v${info.version}  ·  Build ${info.buildTime}`;
+});
 </script>
+<footer><span id="app-version"></span></footer>
 </body>
 </html>

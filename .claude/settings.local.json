@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mvn --version)",
+      "Bash(wc -l /home/airport/Project/snmp-monitor/src/main/java/com/example/snmp/**/*.java)"
+    ]
+  }
+}
