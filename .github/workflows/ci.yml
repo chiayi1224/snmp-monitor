@@ -1,0 +1,66 @@
+# 持續整合：每次 push 到 main 與每個 PR 都會執行
+#   1. 單元測試 + 打包（mvn clean verify）
+#   2. 整合測試（test.sh：啟動 JAR 並以 curl 驗證所有 API）
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支有新的 push 時，取消尚未完成的舊執行
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: 建置與測試
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 取出原始碼
+        uses: actions/checkout@v4
+
+      - name: 安裝 JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: 單元測試與打包
+        run: mvn -B clean verify
+
+      - name: 整合測試（API）
+        run: ./test.sh --skip-build
+
+      - name: 上傳整合測試伺服器 log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-server-log
+          path: /tmp/snmp-monitor-test.log
+          if-no-files-found: ignore
+
+      - name: 上傳測試報告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            target/surefire-reports/
+            target/site/jacoco/
+          if-no-files-found: ignore
+
+      - name: 上傳 JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: simplesnmp-jar
+          path: target/simplesnmp-*.jar
+          retention-days: 14
