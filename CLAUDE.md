@@ -15,7 +15,20 @@ mvn clean compile
 java -jar target/simplesnmp-1.0.0.jar
 ```
 
-目前尚未設定測試框架（無 JUnit 依賴）與 linting 工具。
+## 測試與 CI
+
+```bash
+# 單元測試（JUnit 5 + Mockito，含 JaCoCo 覆蓋率報告 target/site/jacoco/）
+mvn test
+
+# 執行單一測試類別
+mvn test -Dtest=ThresholdEngineTest
+
+# 整合測試：啟動 JAR 並以 curl 驗證所有 API（需先 mvn package）
+./test.sh --skip-build
+```
+
+GitHub Actions（`.github/workflows/ci.yml`）在 push 到 main 與每個 PR 時執行 `mvn -B clean verify` 與 `./test.sh --skip-build`。目前未設定 linting 工具。
 
 ## Architecture Overview
 

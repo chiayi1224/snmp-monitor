@@ -7,7 +7,7 @@
 - `mvn clean compile`：編譯專案。
 - `mvn clean package`：打包成可執行 fat JAR。
 - `java -jar target/simplesnmp-1.0.0.jar`：啟動本機服務。
-- `mvn test`：目前可執行，但因尚未加入測試框架，不會跑出實際測試案例。
+- `mvn test`：執行 JUnit 5 單元測試；`./test.sh --skip-build`：API 整合測試。
 
 執行後 Jetty 預設使用 `8080`，Trap 接收埠為 `1162`，資料持久化使用 SQLite。
 
@@ -15,7 +15,7 @@
 沿用既有 Java 寫法：4 個空白縮排、每檔一個主要類別、package 維持在 `io.github.chiayi1224.simplesnmp` 之下。類別名稱使用 `PascalCase`，方法與欄位使用 `camelCase`，Servlet 類別請採明確命名，例如 `StatusServlet`、`AlertServlet`。依專案既有規範，註解、log 訊息與使用者可見文字請使用正體中文。專案目前未配置 formatter 或 lint，提交前請自行整理 imports 與基本排版。
 
 ## 測試指引
-目前沒有 JUnit 或其他測試相依套件。若補測試，建議採用 JUnit 5，檔名使用 `*Test`，例如 `ThresholdEngineTest`。在自動化測試建立前，至少執行 `mvn clean package`，並手動驗證受影響的 API、登入流程或 SNMP 輪詢/Trap 行為。
+測試採用 JUnit 5 + Mockito，放在 `src/test/java` 下對應的 package，檔名使用 `*Test`，例如 `ThresholdEngineTest`。提交前請執行 `mvn clean package` 與 `./test.sh --skip-build`；GitHub Actions 會在每個 PR 自動執行相同檢查。
 
 ## Commit 與 Pull Request 指引
 目前工作目錄未包含 `.git`，無法直接檢視歷史紀錄；請採保守慣例撰寫 commit subject，使用簡短祈使句，例如 `新增 Trap 告警映射`。每個 commit 聚焦單一主題。PR 請附上變更摘要、設定或資料表影響、驗證步驟；若調整 `src/main/resources/static` 內頁面，請附畫面截圖。
