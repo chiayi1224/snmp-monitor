@@ -5,10 +5,18 @@
          http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.syscom</groupId>
-    <artifactId>snmp-monitor</artifactId>
+    <groupId>io.github.chiayi1224</groupId>
+    <artifactId>simplesnmp</artifactId>
     <version>1.0.0</version>
     <packaging>jar</packaging>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
@@ -99,6 +107,20 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <!-- 授權文件放進 JAR 的 META-INF/（第三方授權義務：散布時須附上） -->
+            <resource>
+                <directory>${project.basedir}</directory>
+                <targetPath>META-INF</targetPath>
+                <includes>
+                    <include>THIRD-PARTY-NOTICES.md</include>
+                    <include>licenses/**</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <!-- JUnit 5 執行器 -->
             <plugin>
@@ -137,10 +159,43 @@
                         <phase>package</phase>
                         <goals><goal>shade</goal></goals>
                         <configuration>
+                            <!--
+                              各相依 JAR 的 META-INF/LICENSE、NOTICE 路徑相同，打包時會互相覆蓋，
+                              留下的檔案無法代表整個 JAR 的授權。統一排除，改由本專案的
+                              META-INF/LICENSE、NOTICE（下方 IncludeResourceTransformer）與
+                              THIRD-PARTY-NOTICES.md、licenses/（build resources）提供。
+                            -->
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/LICENSE</exclude>
+                                        <exclude>META-INF/LICENSE.txt</exclude>
+                                        <exclude>META-INF/LICENSE.md</exclude>
+                                        <exclude>META-INF/NOTICE</exclude>
+                                        <exclude>META-INF/NOTICE.txt</exclude>
+                                        <exclude>META-INF/NOTICE.md</exclude>
+                                        <exclude>META-INF/FastDoubleParser-LICENSE</exclude>
+                                        <exclude>META-INF/FastDoubleParser-NOTICE</exclude>
+                                        <exclude>META-INF/thirdparty-LICENSE</exclude>
+                                        <exclude>META-INF/maven/org.xerial/sqlite-jdbc/LICENSE*</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
                             <transformers>
                                 <transformer implementation=
+                                  "org.apache.maven.plugins.shade.resource.IncludeResourceTransformer">
+                                    <resource>META-INF/LICENSE</resource>
+                                    <file>${project.basedir}/LICENSE</file>
+                                </transformer>
+                                <transformer implementation=
+                                  "org.apache.maven.plugins.shade.resource.IncludeResourceTransformer">
+                                    <resource>META-INF/NOTICE</resource>
+                                    <file>${project.basedir}/NOTICE</file>
+                                </transformer>
+                                <transformer implementation=
                                   "org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.syscom.snmp.SnmpMonitor</mainClass>
+                                    <mainClass>io.github.chiayi1224.simplesnmp.SnmpMonitor</mainClass>
                                     <manifestEntries>
                                         <Implementation-Title>SNMP Monitor</Implementation-Title>
                                         <Implementation-Version>${project.version}</Implementation-Version>

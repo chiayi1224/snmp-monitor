@@ -36,7 +36,7 @@
 git clone https://github.com/your-username/snmp-monitor.git
 cd snmp-monitor
 mvn package -q
-java -jar target/snmp-monitor-1.0-SNAPSHOT.jar
+java -jar target/simplesnmp-1.0.0.jar
 ```
 
 ### 第一次使用
@@ -112,7 +112,7 @@ public static ThresholdConfig cpu() {
 ## 專案結構
 
 ```
-src/main/java/com/example/snmp/
+src/main/java/io/github/chiayi1224/simplesnmp/
 ├── SnmpMonitor.java           主程式入口
 ├── config/
 │   ├── DeviceConfig.java      設備設定 model
@@ -162,4 +162,6 @@ src/main/java/com/example/snmp/
 
 ## License
 
-MIT
+本專案採用 [Apache License 2.0](LICENSE) 授權，版權宣告見 [NOTICE](NOTICE)。
+
+使用的第三方套件及其授權、版權宣告，請見 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)；授權全文放在 [licenses/](licenses/) 目錄。打包後的 JAR 會在 `META-INF/` 內附上同一份文件。

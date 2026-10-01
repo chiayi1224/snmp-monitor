@@ -32,7 +32,7 @@ section() { echo -e "\n${BOLD}══ $* ══${RESET}"; }
 
 BASE="http://localhost:8080"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-JAR="${SCRIPT_DIR}/target/snmp-monitor-1.0.0.jar"
+JAR="${SCRIPT_DIR}/target/simplesnmp-1.0.0.jar"
 DB_FILE="${SCRIPT_DIR}/target/snmp_monitor.db"
 COOKIE_JAR="/tmp/snmp-test-cookies.txt"
 cd "${SCRIPT_DIR}"
