@@ -5,8 +5,8 @@
          http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.syscom</groupId>
-    <artifactId>snmp-monitor</artifactId>
+    <groupId>io.github.chiayi1224</groupId>
+    <artifactId>simplesnmp</artifactId>
     <version>1.0.0</version>
     <packaging>jar</packaging>
 
@@ -195,7 +195,7 @@
                                 </transformer>
                                 <transformer implementation=
                                   "org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.syscom.snmp.SnmpMonitor</mainClass>
+                                    <mainClass>io.github.chiayi1224.simplesnmp.SnmpMonitor</mainClass>
                                     <manifestEntries>
                                         <Implementation-Title>SNMP Monitor</Implementation-Title>
                                         <Implementation-Version>${project.version}</Implementation-Version>

@@ -12,14 +12,16 @@ mvn clean package
 mvn clean compile
 
 # 執行應用程式
-java -jar target/snmp-monitor-1.0-SNAPSHOT.jar
+java -jar target/simplesnmp-1.0.0.jar
 ```
 
 目前尚未設定測試框架（無 JUnit 依賴）與 linting 工具。
 
 ## Architecture Overview
 
-這是一個 Java 11+ Maven 專案，核心為 SNMP 網路設備監控系統，提供輪詢、Trap 接收、閾值告警與 Web 管理介面。
+這是一個 Java 21 Maven 專案，核心為 SNMP 網路設備監控系統，提供輪詢、Trap 接收、閾值告警與 Web 管理介面。
+
+Maven 座標為 `io.github.chiayi1224:simplesnmp`，Java 根套件為 `io.github.chiayi1224.simplesnmp`。
 
 **主要執行緒與埠口：**
 | 元件 | 類別 | 埠口/行為 |

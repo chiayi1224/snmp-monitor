@@ -36,7 +36,7 @@
 git clone https://github.com/your-username/snmp-monitor.git
 cd snmp-monitor
 mvn package -q
-java -jar target/snmp-monitor-1.0-SNAPSHOT.jar
+java -jar target/simplesnmp-1.0.0.jar
 ```
 
 ### 第一次使用
@@ -112,7 +112,7 @@ public static ThresholdConfig cpu() {
 ## 專案結構
 
 ```
-src/main/java/com/example/snmp/
+src/main/java/io/github/chiayi1224/simplesnmp/
 ├── SnmpMonitor.java           主程式入口
 ├── config/
 │   ├── DeviceConfig.java      設備設定 model

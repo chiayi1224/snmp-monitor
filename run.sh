@@ -3,7 +3,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-JAR="${SCRIPT_DIR}/target/snmp-monitor-1.0.0.jar"
+JAR="${SCRIPT_DIR}/target/simplesnmp-1.0.0.jar"
 
 cd "${SCRIPT_DIR}"
 
