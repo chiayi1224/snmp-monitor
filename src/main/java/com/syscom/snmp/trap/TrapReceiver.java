@@ -1,7 +1,6 @@
 package com.syscom.snmp.trap;
 
 import com.syscom.snmp.config.DeviceConfig;
-import com.syscom.snmp.config.TrapOidMapping;
 import com.syscom.snmp.config.TrapOidMapping.Mapping;
 import com.syscom.snmp.config.V3UserConfig;
 import com.syscom.snmp.storage.MetricStore;
@@ -25,9 +24,10 @@ import org.snmp4j.transport.DefaultUdpTransportMapping;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * SNMP Trap Receiver（同時支援 v1 / v2c / v3）
@@ -48,14 +48,14 @@ public class TrapReceiver implements CommandResponder {
     private final int                listenPort;
     private final List<V3UserConfig> v3Users;
     private final MetricStore        store;
-    private final List<Mapping>      mappings;
 
-    // IP → 設備名稱查表，使用 ConcurrentHashMap 確保執行緒安全
-    private final ConcurrentHashMap<String, String> ipToDevice = new ConcurrentHashMap<>();
-
-    // OID 快速查表
-    private final Map<String, Mapping> triggeredIndex = new ConcurrentHashMap<>();
-    private final Map<String, Mapping> resolvedIndex  = new ConcurrentHashMap<>();
+    /*
+     * 查表皆為不可變快照，reload 時整份替換（volatile 寫入），
+     * 避免 clear() 與重新填入之間收到的 Trap 查到空表而被誤判為未定義 / 未登錄。
+     */
+    private volatile Map<String, String>  ipToDevice;      // IP → 設備名稱
+    private volatile Map<String, Mapping> triggeredIndex;  // triggered OID → 對應
+    private volatile Map<String, Mapping> resolvedIndex;   // resolved OID  → 對應
 
     private Snmp snmp;
 
@@ -67,18 +67,8 @@ public class TrapReceiver implements CommandResponder {
         this.listenPort = listenPort;
         this.v3Users    = v3Users;
         this.store      = store;
-        this.mappings   = mappings;
-
-        // 建立 IP → 名稱查表
-        for (DeviceConfig d : devices) {
-            ipToDevice.put(d.getHost(), d.getName());
-        }
-
-        // 建立 OID 快速查表
-        for (Mapping m : mappings) {
-            triggeredIndex.put(m.triggeredOid(), m);
-            if (m.hasResolved()) resolvedIndex.put(m.resolvedOid(), m);
-        }
+        applyDevices(devices);
+        applyMappings(mappings);
     }
 
     // ─── 啟動 ─────────────────────────────────────────────────────
@@ -102,7 +92,7 @@ public class TrapReceiver implements CommandResponder {
         snmp.listen();
 
         log.info("Trap Receiver 啟動，port={}，已知設備 {} 台，OID 對應 {} 組",
-            listenPort, ipToDevice.size(), mappings.size());
+            listenPort, ipToDevice.size(), triggeredIndex.size());
     }
 
     public void stop() {
@@ -115,10 +105,7 @@ public class TrapReceiver implements CommandResponder {
      * 重新載入設備清單（設備增修刪後呼叫此方法，無需重啟）
      */
     public void reloadDevices(List<DeviceConfig> devices) {
-        ipToDevice.clear();
-        for (DeviceConfig d : devices) {
-            ipToDevice.put(d.getHost(), d.getName());
-        }
+        applyDevices(devices);
         log.info("Trap Receiver 設備清單已重新載入，共 {} 台", ipToDevice.size());
     }
 
@@ -143,13 +130,25 @@ public class TrapReceiver implements CommandResponder {
      * 重新載入 Trap OID 對應表（OID 設定增修刪後呼叫此方法，無需重啟）
      */
     public void reloadMappings(List<Mapping> newMappings) {
-        triggeredIndex.clear();
-        resolvedIndex.clear();
-        for (Mapping m : newMappings) {
-            triggeredIndex.put(m.triggeredOid(), m);
-            if (m.hasResolved()) resolvedIndex.put(m.resolvedOid(), m);
-        }
+        applyMappings(newMappings);
         log.info("Trap Receiver OID 對應表已重新載入，共 {} 組", newMappings.size());
+    }
+
+    private void applyDevices(List<DeviceConfig> devices) {
+        Map<String, String> ips = new HashMap<>();
+        for (DeviceConfig d : devices) ips.put(d.getHost(), d.getName());
+        ipToDevice = Map.copyOf(ips);
+    }
+
+    private void applyMappings(List<Mapping> mappings) {
+        Map<String, Mapping> triggered = new HashMap<>();
+        Map<String, Mapping> resolved  = new HashMap<>();
+        for (Mapping m : mappings) {
+            triggered.put(m.triggeredOid(), m);
+            if (m.hasResolved()) resolved.put(m.resolvedOid(), m);
+        }
+        triggeredIndex = Map.copyOf(triggered);
+        resolvedIndex  = Map.copyOf(resolved);
     }
 
     // ─── 收到 Trap ────────────────────────────────────────────────
@@ -158,59 +157,71 @@ public class TrapReceiver implements CommandResponder {
     public <A extends org.snmp4j.smi.Address> void processPdu(CommandResponderEvent<A> event) {
         if (event.getPDU() == null) return;
 
-        // ① 取得 peer IP
         String peerIp = extractIp(event.getPeerAddress() != null
             ? event.getPeerAddress().toString() : "unknown");
+        log.debug("收到 Trap from={} version={}", peerIp, snmpVersion(event.getMessageProcessingModel()));
 
-        // ② 查表取得設備名稱；找不到則用 IP 當名稱，並標記為未登錄來源
-        boolean knownSource = ipToDevice.containsKey(peerIp);
-        String deviceName = knownSource ? ipToDevice.get(peerIp) : peerIp;
-
-        String version = snmpVersion(event.getMessageProcessingModel());
-        log.debug("收到 Trap from={} ({}) version={}", deviceName, peerIp, version);
-
-        // ③ 收集 VarBind
-        Map<String, String> bindings = new ConcurrentHashMap<>();
+        // 依 PDU 順序收集 VarBind
+        Map<String, String> bindings = new LinkedHashMap<>();
         for (VariableBinding vb : event.getPDU().getVariableBindings()) {
             bindings.put(vb.getOid().toString(), vb.getVariable().toString());
         }
 
-        // ④ 取出 trap OID（v1 沒有這個欄位）
+        handleTrap(peerIp, bindings);
+        event.setProcessed(true);
+    }
+
+    /**
+     * Trap 處理主流程（不依賴 SNMP4J 事件物件，方便單元測試）
+     *
+     * @param peerIp   來源 IP
+     * @param bindings VarBind（OID → 值），需保留 PDU 原始順序
+     */
+    void handleTrap(String peerIp, Map<String, String> bindings) {
+        // ① 查表取得設備名稱；找不到則用 IP 當名稱，並標記為未登錄來源
+        String  knownName   = ipToDevice.get(peerIp);
+        boolean knownSource = knownName != null;
+        String  deviceName  = knownSource ? knownName : peerIp;
+
+        // ② 取出 trap OID（v1 沒有這個欄位）
         String trapOid = bindings.get(SNMP_TRAP_OID_KEY);
         if (trapOid == null) {
             log.info("收到 v1 trap from={} ({})，無 snmpTrapOID，略過", deviceName, peerIp);
-            event.setProcessed(true);
             return;
         }
 
-        // ⑤ 組合 varbind 描述（排除 snmpTrapOID.0 本身）
-        StringBuilder sb = new StringBuilder();
-        bindings.forEach((oid, val) -> {
-            if (!SNMP_TRAP_OID_KEY.equals(oid)) {
-                if (!sb.isEmpty()) sb.append("; ");
-                sb.append(oid).append("=").append(val);
-            }
-        });
-        String message = sb.toString();
+        // ③ 組合 varbind 描述（排除 snmpTrapOID.0 本身）
+        String message = describeBindings(bindings);
 
-        // ⑥ 未登錄來源 IP：記錄到 unknown_sources（不影響後續 OID 處理）
+        // ④ 未登錄來源 IP：記錄到 unknown_sources（不影響後續 OID 處理）
         if (!knownSource) {
             log.info("未登錄來源 IP={} trapOid={}", peerIp, trapOid);
             store.saveUnknownSource(peerIp, trapOid, message);
         }
 
-        // ⑦ 查 OID 對應表
-        if (triggeredIndex.containsKey(trapOid)) {
-            handleTriggered(deviceName, triggeredIndex.get(trapOid), message);
-        } else if (resolvedIndex.containsKey(trapOid)) {
-            handleResolved(deviceName, resolvedIndex.get(trapOid), message);
+        // ⑤ 查 OID 對應表
+        Mapping triggered = triggeredIndex.get(trapOid);
+        Mapping resolved  = resolvedIndex.get(trapOid);
+        if (triggered != null) {
+            handleTriggered(deviceName, triggered, message);
+        } else if (resolved != null) {
+            handleResolved(deviceName, resolved, message);
         } else {
             // 未定義 OID：完整記錄到 DB，同一 OID 只保留一筆（計次更新）
             log.info("未定義 trap from={} ({}) trapOid={}", deviceName, peerIp, trapOid);
             store.saveUnknownTrap(trapOid, deviceName, peerIp, message);
         }
+    }
 
-        event.setProcessed(true);
+    /** 將 VarBind 組成 "oid=value; oid=value" 字串（排除 snmpTrapOID.0） */
+    private static String describeBindings(Map<String, String> bindings) {
+        StringBuilder sb = new StringBuilder();
+        bindings.forEach((oid, val) -> {
+            if (SNMP_TRAP_OID_KEY.equals(oid)) return;
+            if (!sb.isEmpty()) sb.append("; ");
+            sb.append(oid).append("=").append(val);
+        });
+        return sb.toString();
     }
 
     // ─── TRIGGERED ────────────────────────────────────────────────
@@ -277,12 +288,12 @@ public class TrapReceiver implements CommandResponder {
      * 例如 "192.168.1.10/45123" → "192.168.1.10"
      *      "192.168.1.10"       → "192.168.1.10"
      */
-    private String extractIp(String address) {
+    private static String extractIp(String address) {
         int slash = address.lastIndexOf('/');
         return slash >= 0 ? address.substring(0, slash) : address;
     }
 
-    private String snmpVersion(int model) {
+    private static String snmpVersion(int model) {
         return switch (model) {
             case 0  -> "v1";
             case 1  -> "v2c";

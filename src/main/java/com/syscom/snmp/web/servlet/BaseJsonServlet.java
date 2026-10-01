@@ -82,11 +82,22 @@ public abstract class BaseJsonServlet extends HttpServlet {
         return body.path(field).asBoolean(def);
     }
 
+    /** 取出 pathInfo 去掉開頭 "/" 後的字串（如 "/Router-01" → "Router-01"）；無路徑時回傳 null */
+    protected String pathName(HttpServletRequest req) {
+        String info = req.getPathInfo();
+        if (info == null || info.equals("/")) return null;
+        return info.substring(1);
+    }
+
     /** 從 pathInfo（如 "/123"）解析數字 ID；無效時回傳 -1 */
     protected long pathId(HttpServletRequest req) {
-        String info = req.getPathInfo();
-        if (info == null || info.equals("/")) return -1;
-        try { return Long.parseLong(info.substring(1)); }
+        return parseId(pathName(req));
+    }
+
+    /** 解析數字 ID；null 或非數字時回傳 -1 */
+    protected static long parseId(String s) {
+        if (s == null) return -1;
+        try { return Long.parseLong(s); }
         catch (NumberFormatException e) { return -1; }
     }
 }

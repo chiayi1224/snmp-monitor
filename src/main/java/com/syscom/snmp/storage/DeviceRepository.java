@@ -1,6 +1,7 @@
 package com.syscom.snmp.storage;
 
 import com.syscom.snmp.config.DeviceConfig;
+import com.syscom.snmp.model.DeviceStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -91,7 +92,7 @@ final class DeviceRepository {
 
     /** 更新設備連線狀態（ONLINE / OFFLINE / UNKNOWN） */
     void updateStatus(String deviceName, String status) {
-        String lastSeen = "OFFLINE".equals(status) ? "" : Db.now();
+        String lastSeen = DeviceStatus.OFFLINE.name().equals(status) ? "" : Db.now();
         try {
             db.update("UPDATE devices SET status=?, last_seen=? WHERE name=?", status, lastSeen, deviceName);
         } catch (SQLException ex) {

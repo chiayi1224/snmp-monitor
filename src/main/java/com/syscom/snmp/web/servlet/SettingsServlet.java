@@ -33,11 +33,11 @@ public class SettingsServlet extends BaseJsonServlet {
 
     @Override
     protected void doPut(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        String info = req.getPathInfo();
-        if (info == null || info.equals("/")) { writeError(resp, 400, "請指定 key"); return; }
-        String key = info.substring(1);
+        String key = pathName(req);
+        if (key == null) { writeError(resp, 400, "請指定 key"); return; }
         try {
-            JsonNode body = JSON.readTree(req.getReader());
+            JsonNode body = parseBody(req, resp);
+            if (body == null) return;
             String value = body.path("value").asText("").strip();
             if (value.isBlank()) { writeError(resp, 400, "value 不可為空"); return; }
             store.upsertSetting(key, value, "");

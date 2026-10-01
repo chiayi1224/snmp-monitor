@@ -60,7 +60,7 @@ public class DeviceServlet extends BaseJsonServlet {
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         try {
-            String name = extractName(req);
+            String name = pathName(req);
             if (name == null) {
                 writeJson(resp, store.queryAllDevices());
             } else {
@@ -81,7 +81,7 @@ public class DeviceServlet extends BaseJsonServlet {
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         try {
-            String name = extractName(req);
+            String name = pathName(req);
             JsonNode body = parseBody(req, resp);
             if (body == null) return;
 
@@ -122,12 +122,5 @@ public class DeviceServlet extends BaseJsonServlet {
         } catch (Exception e) {
             writeError(resp, 500, e.getMessage());
         }
-    }
-
-    /** 從 pathInfo（如 "/Router-01"）取出設備名稱，無路徑時回 null */
-    private String extractName(HttpServletRequest req) {
-        String info = req.getPathInfo();
-        if (info == null || info.equals("/")) return null;
-        return info.substring(1);
     }
 }

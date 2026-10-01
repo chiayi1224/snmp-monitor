@@ -60,16 +60,17 @@ public class UserServlet extends BaseJsonServlet {
     @Override
     protected void doPut(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         try {
-            String pathInfo = req.getPathInfo();
-            if (pathInfo == null) { writeError(resp, 400, "缺少 ID"); return; }
-
-            String[] parts = pathInfo.substring(1).split("/");
-            long id = Long.parseLong(parts[0]);
+            // 路徑格式：/{id} 或 /{id}/password
+            String   path  = pathName(req);
+            String[] parts = path == null ? new String[0] : path.split("/");
+            long id = parseId(parts.length > 0 ? parts[0] : null);
+            if (id < 0) { writeError(resp, 400, "缺少 ID"); return; }
+            boolean changePassword = parts.length >= 2 && "password".equals(parts[1]);
 
             JsonNode body = parseBody(req, resp);
             if (body == null) return;
 
-            if (parts.length >= 2 && "password".equals(parts[1])) {
+            if (changePassword) {
                 String newPassword = requireText(body, "password", resp);
                 if (newPassword == null) return;
                 if (newPassword.length() < 6) {
@@ -94,11 +95,8 @@ public class UserServlet extends BaseJsonServlet {
     @Override
     protected void doDelete(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         try {
-            String pathInfo = req.getPathInfo();
-            if (pathInfo == null || pathInfo.equals("/")) {
-                writeError(resp, 400, "缺少 ID"); return;
-            }
-            long id = Long.parseLong(pathInfo.substring(1));
+            long id = pathId(req);
+            if (id < 0) { writeError(resp, 400, "缺少 ID"); return; }
             store.deleteUser(id);
             writeJson(resp, Map.of("message", "刪除成功"));
         } catch (Exception e) {

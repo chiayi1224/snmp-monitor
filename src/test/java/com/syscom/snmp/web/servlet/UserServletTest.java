@@ -156,6 +156,26 @@ class UserServletTest {
         verify(resp).setStatus(400);
     }
 
+    @Test
+    void PUT_ID非數字回傳400() throws Exception {
+        when(req.getPathInfo()).thenReturn("/abc");
+
+        servlet.doPut(req, resp);
+
+        verify(resp).setStatus(400);
+        verify(store, never()).updateUser(anyLong(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void DELETE_ID非數字回傳400() throws Exception {
+        when(req.getPathInfo()).thenReturn("/abc");
+
+        servlet.doDelete(req, resp);
+
+        verify(resp).setStatus(400);
+        verify(store, never()).deleteUser(anyLong());
+    }
+
     // ─── DELETE /api/users/{id} ───────────────────────────────────
 
     @Test

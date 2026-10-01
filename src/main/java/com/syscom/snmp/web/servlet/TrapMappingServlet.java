@@ -70,7 +70,7 @@ public class TrapMappingServlet extends BaseJsonServlet {
     @Override
     protected void doPut(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         try {
-            long id = extractId(req.getPathInfo());
+            long id = pathId(req);
             if (id < 0) { writeError(resp, 400, "缺少 ID"); return; }
 
             JsonNode body = parseBody(req, resp);
@@ -93,7 +93,7 @@ public class TrapMappingServlet extends BaseJsonServlet {
     @Override
     protected void doDelete(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         try {
-            long id = extractId(req.getPathInfo());
+            long id = pathId(req);
             if (id < 0) { writeError(resp, 400, "缺少 ID"); return; }
 
             store.deleteTrapMapping(id);
@@ -101,15 +101,6 @@ public class TrapMappingServlet extends BaseJsonServlet {
             writeJson(resp, Map.of("message", "刪除成功", "id", id));
         } catch (Exception e) {
             writeError(resp, 500, e.getMessage());
-        }
-    }
-
-    private long extractId(String pathInfo) {
-        if (pathInfo == null || pathInfo.equals("/")) return -1;
-        try {
-            return Long.parseLong(pathInfo.substring(1));
-        } catch (NumberFormatException e) {
-            return -1;
         }
     }
 }

@@ -26,11 +26,10 @@ public class V1DeviceServlet extends BaseJsonServlet {
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         try {
-            String pathInfo = req.getPathInfo();
-            if (pathInfo == null || pathInfo.equals("/")) {
+            String name = pathName(req);
+            if (name == null) {
                 writeJson(resp, store.queryAllDevices());
             } else {
-                String name = pathInfo.substring(1);
                 Map<String, Object> device = store.queryDeviceByName(name);
                 if (device == null) {
                     writeError(resp, 404, "找不到設備：" + name);

@@ -2,6 +2,7 @@ package com.syscom.snmp.poller;
 
 import com.syscom.snmp.config.DeviceConfig;
 import com.syscom.snmp.config.OidConstants;
+import com.syscom.snmp.model.DeviceStatus;
 import com.syscom.snmp.model.DiskInfo;
 import com.syscom.snmp.storage.MetricStore;
 import com.syscom.snmp.threshold.ThresholdEngine;
@@ -106,7 +107,7 @@ public class SnmpPoller {
         if (pingEnabled) {
             if (!isReachable(device.getHost(), pingTimeoutMs)) {
                 log.warn("[{}] Ping {} 失敗，標記 OFFLINE，跳過 SNMP poll", name, device.getHost());
-                store.updateDeviceStatus(name, "OFFLINE");
+                updateStatus(name, DeviceStatus.OFFLINE);
                 return;
             }
             log.debug("[{}] Ping 成功", name);
@@ -118,46 +119,46 @@ public class SnmpPoller {
         // SNMP 無回應（有 OID 要查但回傳空）→ SNMP_ERROR
         if (!scalarOids.isEmpty() && scalars.isEmpty()) {
             log.warn("[{}] SNMP GET 無回應，標記 SNMP_ERROR", name);
-            store.updateDeviceStatus(name, "SNMP_ERROR");
+            updateStatus(name, DeviceStatus.SNMP_ERROR);
             return;
         }
 
-        // CPU
-        String idleStr = scalars.get(OidConstants.CPU_IDLE);
-        if (idleStr != null) {
-            double cpuUsed = 100.0 - Double.parseDouble(idleStr);
-            store.saveCpu(name, cpuUsed);
-            thresholdEngine.evaluateCpu(name, cpuUsed);
-            log.info("[{}] CPU {:.1f}%", name, cpuUsed);
-        }
-
-        // Memory
-        String totalStr  = scalars.get(OidConstants.MEM_TOTAL);
-        String freeStr   = scalars.get(OidConstants.MEM_FREE);
-        String bufferStr = scalars.get(OidConstants.MEM_BUFFER);
-        String cacheStr  = scalars.get(OidConstants.MEM_CACHE);
-        if (totalStr != null && freeStr != null && bufferStr != null && cacheStr != null) {
-            long totalKb  = Long.parseLong(totalStr);
-            long freeKb   = Long.parseLong(freeStr);
-            long bufferKb = Long.parseLong(bufferStr);
-            long cacheKb  = Long.parseLong(cacheStr);
-            long usedKb   = totalKb - freeKb - bufferKb - cacheKb;
-            double memPct = totalKb > 0 ? (double) usedKb / totalKb * 100.0 : 0.0;
-            store.saveMemory(name, memPct, totalKb, usedKb);
-            thresholdEngine.evaluateMemory(name, memPct);
-            log.info("[{}] Memory {:.1f}%", name, memPct);
-        }
+        recordCpu(name, scalars);
+        recordMemory(name, scalars);
 
         // ── WALK：Disk ────────────────────────────────────────────
-        if (diskEnabled) {
-            List<DiskInfo> disks = getDiskInfo(device);
-            store.saveDisk(name, disks);
-            thresholdEngine.evaluateDisks(name, disks);
-            for (DiskInfo d : disks) log.info("[{}] Disk {}", name, d);
-        }
+        if (diskEnabled) recordDisks(device);
 
         // Ping + SNMP 均正常
-        store.updateDeviceStatus(name, "ONLINE");
+        updateStatus(name, DeviceStatus.ONLINE);
+    }
+
+    private void recordCpu(String name, Map<String, String> scalars) {
+        Double cpuUsed = PollParser.cpuUsedPct(scalars);
+        if (cpuUsed == null) return;
+        store.saveCpu(name, cpuUsed);
+        thresholdEngine.evaluateCpu(name, cpuUsed);
+        log.info("[{}] CPU {}%", name, String.format("%.1f", cpuUsed));
+    }
+
+    private void recordMemory(String name, Map<String, String> scalars) {
+        PollParser.Memory mem = PollParser.memory(scalars);
+        if (mem == null) return;
+        store.saveMemory(name, mem.usedPct(), mem.totalKb(), mem.usedKb());
+        thresholdEngine.evaluateMemory(name, mem.usedPct());
+        log.info("[{}] Memory {}%", name, String.format("%.1f", mem.usedPct()));
+    }
+
+    private void recordDisks(DeviceConfig device) throws IOException {
+        String name = device.getName();
+        List<DiskInfo> disks = getDiskInfo(device);
+        store.saveDisk(name, disks);
+        thresholdEngine.evaluateDisks(name, disks);
+        for (DiskInfo d : disks) log.info("[{}] Disk {}", name, d);
+    }
+
+    private void updateStatus(String name, DeviceStatus status) {
+        store.updateDeviceStatus(name, status.name());
     }
 
     // ─── Ping ─────────────────────────────────────────────────────
