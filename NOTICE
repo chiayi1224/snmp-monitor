@@ -1,0 +1,134 @@
+SNMP Monitor
+Copyright 2026 Simon Tsao
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+本產品包含以下第三方軟體。各套件的授權條款、版權宣告與完整授權全文
+請見 THIRD-PARTY-NOTICES.md 與 licenses/ 目錄。
+
+==============================================================================
+以下內容依 Apache License 2.0 第 4(d) 條，轉載自所使用套件的 NOTICE 檔案。
+==============================================================================
+
+------------------------------------------------------------------------------
+Jackson (jackson-core / jackson-databind / jackson-annotations 2.16.1)
+------------------------------------------------------------------------------
+# Jackson JSON processor
+
+Jackson is a high-performance, Free/Open Source JSON processing library.
+It was originally written by Tatu Saloranta (tatu.saloranta@iki.fi), and has
+been in development since 2007.
+It is currently developed by a community of developers.
+
+## Copyright
+
+Copyright 2007-, Tatu Saloranta (tatu.saloranta@iki.fi)
+
+## Licensing
+
+Jackson 2.x core and extension components are licensed under Apache License 2.0
+To find the details that apply to this artifact see the accompanying LICENSE file.
+
+## Credits
+
+A list of contributors may be found from CREDITS(-2.x) file, which is included
+in some artifacts (usually source distributions); but is always available
+from the source code management (SCM) system project uses.
+
+## FastDoubleParser
+
+jackson-core bundles a shaded copy of FastDoubleParser <https://github.com/wrandelshofer/FastDoubleParser>.
+That code is available under an MIT license <https://github.com/wrandelshofer/FastDoubleParser/blob/main/LICENSE>
+under the following copyright.
+
+Copyright © 2023 Werner Randelshofer, Switzerland. MIT License.
+
+See FastDoubleParser-NOTICE for details of other source code included in FastDoubleParser
+and the licenses and copyrights that apply to that code.
+
+------------------------------------------------------------------------------
+Eclipse Jetty 11.0.20
+------------------------------------------------------------------------------
+Notices for Eclipse Jetty
+=========================
+This content is produced and maintained by the Eclipse Jetty project.
+
+Project home: https://eclipse.dev/jetty/
+
+Trademarks
+----------
+Eclipse Jetty, and Jetty are trademarks of the Eclipse Foundation.
+
+Copyright
+---------
+All contributions are the property of the respective authors or of
+entities to which copyright has been assigned by the authors (eg. employer).
+
+Declared Project Licenses
+-------------------------
+This artifacts of this project are made available under the terms of:
+
+  * the Eclipse Public License v2.0
+    https://www.eclipse.org/legal/epl-2.0
+    SPDX-License-Identifier: EPL-2.0
+
+  or
+
+  * the Apache License, Version 2.0
+    https://www.apache.org/licenses/LICENSE-2.0
+    SPDX-License-Identifier: Apache-2.0
+
+Cryptography
+------------
+Content may contain encryption software. The country in which you are currently
+may have restrictions on the import, possession, and use, and/or re-export to
+another country, of encryption software. BEFORE using any encryption software,
+please check the country's laws, regulations and policies concerning the import,
+possession, or use, and re-export of encryption software, to see if this is
+permitted.
+
+The UnixCrypt.java code implements the one way cryptography used by
+Unix systems for simple password protection.  Copyright 1996 Aki Yoshida,
+modified April 2001  by Iris Van den Broeke, Daniel Deville.
+Permission to use, copy, modify and distribute UnixCrypt
+for non-commercial or commercial purposes and without fee is
+granted provided that the copyright notice appears in all copies.
+
+------------------------------------------------------------------------------
+Jakarta Servlet API (org.eclipse.jetty.toolchain:jetty-jakarta-servlet-api 5.0.2)
+------------------------------------------------------------------------------
+# Notices for Eclipse Project for Servlet
+
+This content is produced and maintained by the Eclipse Project for Servlet
+project.
+
+* Project home: https://projects.eclipse.org/projects/ee4j.servlet
+
+## Trademarks
+
+Eclipse Project for Servlet is a trademark of the Eclipse Foundation.
+
+## Copyright
+
+All content is the property of the respective authors or their employers. For
+more information regarding authorship of content, please consult the listed
+source code repository logs.
+
+## Declared Project Licenses
+
+This program and the accompanying materials are made available under the terms
+of the Eclipse Public License v. 2.0 which is available at
+http://www.eclipse.org/legal/epl-2.0. This Source Code may also be made
+available under the following Secondary Licenses when the conditions for such
+availability set forth in the Eclipse Public License v. 2.0 are satisfied: GNU
+General Public License, version 2 with the GNU Classpath Exception which is
+available at https://www.gnu.org/software/classpath/license.html.
+
+SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
+
+## Source Code
+
+The project maintains the following source code repositories:
+
+ * https://github.com/eclipse-ee4j/servlet-api
+ * https://github.com/eclipse/jetty.toolchain

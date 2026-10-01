@@ -69,3 +69,7 @@ JettyServer (8080) ◄───────────────────�
 ## Language Convention
 
 程式碼、log 訊息與註解均使用**繁體中文**撰寫，請維持此慣例。
+
+## 授權
+
+本專案採 Apache-2.0（`LICENSE`、`NOTICE`）。新增或升級相依套件時，須同步更新 `THIRD-PARTY-NOTICES.md`；有 NOTICE 的 Apache-2.0 套件要轉載到 `NOTICE`，新的授權類型要把全文放進 `licenses/`。`pom.xml` 的 shade 設定會排除各相依 JAR 互相覆蓋的 LICENSE / NOTICE，改為打包本專案的授權文件。
