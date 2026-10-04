@@ -11,6 +11,14 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import org.snmp4j.PDU;
+import org.snmp4j.PDUv1;
+import org.snmp4j.smi.IpAddress;
+import org.snmp4j.smi.OID;
+import org.snmp4j.smi.OctetString;
+import org.snmp4j.smi.VariableBinding;
+
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -141,5 +149,66 @@ class TrapReceiverHandleTest {
 
         verify(store).saveAlertEvent(any());
         verify(store).saveUnknownTrap(eq(CPU_HIGH), any(), any(), any());
+    }
+
+    // ─── v1 → v2 轉換（RFC 3584 §3.1）────────────────────────────
+
+    private static PDUv1 v1(int generic, int specific) {
+        PDUv1 pdu = new PDUv1();
+        pdu.setType(PDU.V1TRAP);
+        pdu.setEnterprise(new OID("1.3.6.1.4.1.9999"));
+        pdu.setGenericTrap(generic);
+        pdu.setSpecificTrap(specific);
+        pdu.setTimestamp(100);
+        pdu.setAgentAddress(new IpAddress("192.168.1.10"));
+        pdu.add(new VariableBinding(new OID("1.3.6.1.4.1.9999.2.1"), new OctetString("x")));
+        return pdu;
+    }
+
+    @Test
+    void v1轉換_enterpriseSpecific_為enterprise點0點specific() {
+        Map<String, String> b = TrapReceiver.v1ToV2Bindings(v1(PDUv1.ENTERPRISE_SPECIFIC, 42));
+
+        assertEquals("1.3.6.1.4.1.9999.0.42", b.get(TRAP_OID_KEY));
+    }
+
+    @Test
+    void v1轉換_generic依序對應snmpTraps() {
+        String[] expected = { "1", "2", "3", "4", "5", "6" };  // coldStart … egpNeighborLoss
+        for (int generic = 0; generic <= 5; generic++) {
+            Map<String, String> b = TrapReceiver.v1ToV2Bindings(v1(generic, 0));
+            assertEquals("1.3.6.1.6.3.1.1.5." + expected[generic], b.get(TRAP_OID_KEY));
+        }
+    }
+
+    @Test
+    void v1轉換_欄位順序與附加欄位符合RFC3584() {
+        Map<String, String> b = TrapReceiver.v1ToV2Bindings(v1(PDUv1.ENTERPRISE_SPECIFIC, 1));
+
+        assertEquals(List.of(
+            TrapReceiver.SYS_UPTIME_KEY, TRAP_OID_KEY, "1.3.6.1.4.1.9999.2.1",
+            TrapReceiver.SNMP_TRAP_ADDRESS_KEY, TrapReceiver.SNMP_TRAP_ENTERPRISE_KEY),
+            new ArrayList<>(b.keySet()));
+        assertEquals("192.168.1.10",     b.get(TrapReceiver.SNMP_TRAP_ADDRESS_KEY));
+        assertEquals("1.3.6.1.4.1.9999", b.get(TrapReceiver.SNMP_TRAP_ENTERPRISE_KEY));
+    }
+
+    // ─── community 允許清單 ─────────────────────────────────────
+
+    @Test
+    void community_設定為星號或未設定時全部接受() {
+        assertTrue(receiver.isCommunityAccepted("any"));
+        when(store.getSetting(eq("trap_communities"), any())).thenReturn(" * ");
+        assertTrue(receiver.isCommunityAccepted("any"));
+    }
+
+    @Test
+    void community_依逗號分隔清單比對且區分大小寫() {
+        when(store.getSetting(eq("trap_communities"), any())).thenReturn("public, Monitor");
+
+        assertTrue (receiver.isCommunityAccepted("public"));
+        assertTrue (receiver.isCommunityAccepted("Monitor"));
+        assertFalse(receiver.isCommunityAccepted("monitor"));
+        assertFalse(receiver.isCommunityAccepted(""));
     }
 }

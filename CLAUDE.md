@@ -56,6 +56,10 @@ JettyServer (8080) ◄───────────────────�
 2. `SnmpPoller` 每次 poll 前都重新從 DB 讀取設備清單，因此新增/修改設備無需重啟即生效。
 3. `ThresholdEngine` 使用狀態機（`ThresholdState`）與 hysteresis 防止告警抖動：CPU/記憶體需連續 3 次超標才觸發，磁碟需 2 次；恢復需連續 2 次低於 rearm 值。
 4. `TrapReceiver` 依來源 IP 查找設備名稱（啟動時建立 IP→name 對應表），trap OID 透過 `TrapOidMapping` 轉換為告警類型。
+   - 同一個 port 同時接收 v1 / v2c / v3 與 INFORM；v1 依 RFC 3584 轉成 v2 格式，INFORM 會回覆 RESPONSE。
+   - v1 / v2c 的 community 依設定 `trap_communities` 過濾（逗號分隔，`*` 代表全部接受）；v3 使用者由 `reloadV3Users()` 即時增刪。
+   - 使用自己的 `USM` / `SecurityProtocols` 實例，不依賴 SNMP4J 的全域 singleton（全域實例預設沒有載入任何加密協定）。
+   - `TrapReceiverEndToEndTest` 會在本機實際送出各版本 Trap 驗證，修改接收邏輯後請執行。
 
 ### Web 層
 
