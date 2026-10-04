@@ -15,6 +15,7 @@ import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -62,6 +63,7 @@ public class MetricStore implements AutoCloseable {
         }
         conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
         conn.setAutoCommit(true);
+        configureConnection(conn, !":memory:".equals(dbPath));
 
         Db db = new Db(conn);
         SchemaManager schema = new SchemaManager(db);
@@ -89,6 +91,29 @@ public class MetricStore implements AutoCloseable {
         v3Users.seedDefaults();
         discovery.failInterruptedScans();
         log.info("MetricStore 開啟: {}", dbPath);
+    }
+
+    /** 寫入被鎖住時最多等待的毫秒數（例如外部工具正在寫入），超過才回報 SQLITE_BUSY */
+    static final int BUSY_TIMEOUT_MS = 5_000;
+
+    /**
+     * 連線設定：
+     *   - WAL 模式：讀寫可同時進行，外部工具（sqlite3、備份程式）讀取時不會擋住寫入；
+     *     設定會記錄在 DB 檔中，執行時會多出 -wal / -shm 兩個檔案
+     *   - synchronous=NORMAL：WAL 模式下的建議值，斷電最多遺失最後幾筆交易，不會損毀資料檔
+     *   - busy_timeout：遇到鎖定時等待而非立即失敗
+     * in-memory DB 不支援 WAL，只設定 busy_timeout。
+     */
+    private static void configureConnection(Connection conn, boolean fileDb) throws SQLException {
+        try (java.sql.Statement st = conn.createStatement()) {
+            st.execute("PRAGMA busy_timeout=" + BUSY_TIMEOUT_MS);
+            if (!fileDb) return;
+            try (java.sql.ResultSet rs = st.executeQuery("PRAGMA journal_mode=WAL")) {
+                String mode = rs.next() ? rs.getString(1) : "?";
+                if (!"wal".equalsIgnoreCase(mode)) log.warn("無法啟用 WAL 模式，目前為 {}", mode);
+            }
+            st.execute("PRAGMA synchronous=NORMAL");
+        }
     }
 
     // ─── 帳號 ──────────────────────────────────────────────────────
@@ -426,6 +451,23 @@ public class MetricStore implements AutoCloseable {
     /** 查詢稽核日誌 */
     public List<Map<String, Object>> queryAuditLogs(String eventType, String actor, int limit) {
         return auditLogs.query(eventType, actor, limit);
+    }
+
+    // ─── 資料保存期限 ─────────────────────────────────────────────
+
+    /** 刪除 cutoff 之前的指標資料（cpu / mem / disk），回傳刪除筆數 */
+    public int purgeMetricsBefore(Instant cutoff) throws SQLException {
+        return metrics.purgeBefore(cutoff.toString());
+    }
+
+    /** 刪除 cutoff 之前的告警記錄（各指標最後一筆狀態保留），回傳刪除筆數 */
+    public int purgeAlertsBefore(Instant cutoff) throws SQLException {
+        return alerts.purgeBefore(cutoff.toString());
+    }
+
+    /** 刪除 cutoff 之前的稽核日誌，回傳刪除筆數 */
+    public int purgeAuditLogsBefore(Instant cutoff) throws SQLException {
+        return auditLogs.purgeBefore(cutoff.toString());
     }
 
     // ─── OID 掃描 ─────────────────────────────────────────────────

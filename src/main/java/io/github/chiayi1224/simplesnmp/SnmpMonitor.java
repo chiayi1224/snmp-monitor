@@ -3,6 +3,7 @@ package io.github.chiayi1224.simplesnmp;
 import io.github.chiayi1224.simplesnmp.config.TrapOidMapping;
 import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
 import io.github.chiayi1224.simplesnmp.discovery.DiscoveryService;
+import io.github.chiayi1224.simplesnmp.maintenance.DataRetentionJob;
 import io.github.chiayi1224.simplesnmp.poller.SnmpPoller;
 import io.github.chiayi1224.simplesnmp.snmp.SnmpSession;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
@@ -53,6 +54,10 @@ public class SnmpMonitor {
         SnmpPoller poller = new SnmpPoller(store, pollInterval);
         poller.start();
 
+        // ── 3-1. 資料保存期限（每天清除過期資料）────────────────────
+        DataRetentionJob retention = new DataRetentionJob(store);
+        retention.start();
+
         // ── 4. Trap Receiver（OID 對應從 DB 載入，支援 Web 維護）──
         TrapReceiver trapReceiver = new TrapReceiver(
             trapPort, v3Users, store,
@@ -75,6 +80,7 @@ public class SnmpMonitor {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             log.info("關閉中...");
             poller.stop();
+            retention.stop();
             trapReceiver.stop();
             discovery.close();
             try { discoverySession.close(); } catch (Exception ignored) {}

@@ -82,6 +82,8 @@ JettyServer (8080) ◄───────────────────�
 
 新增資料表時：DDL 加到 `SchemaManager`，SQL 寫在新的 Repository，再於 `MetricStore` 新增委派方法。
 
+連線啟用 WAL 模式（`synchronous=NORMAL`、`busy_timeout` 5 秒）：外部讀取不會擋住寫入，但同一時間仍只能有一個寫入者。`maintenance.DataRetentionJob` 每天依設定 `retention_metrics_days`（90）、`retention_alerts_days`（365）、`retention_audit_days`（365）清除過期資料，`0` 代表永久保留；告警清除時保留每個設備＋指標最後一筆狀態。時間欄位一律存 `Instant.toString()` 的 ISO-8601 字串，以字串比較時間先後。
+
 **預設帳號：** `admin` / `admin`（首次登入需強制改密碼）
 
 ### 設定常數

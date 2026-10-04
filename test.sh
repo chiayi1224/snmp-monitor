@@ -357,6 +357,20 @@ assert_contains "snmp_retries 已更新為 3" '"3"'
 call PUT /api/admin/settings/snmp_retries -d '{"value":""}'
 assert_status "value 空白回 400" 400
 
+call PUT /api/admin/settings/retention_metrics_days -d '{"value":"30"}'
+assert_status "設定指標保留 30 天" 200
+call GET /api/admin/settings
+assert_contains "保留天數已更新" '"value" : "30"'
+
+call PUT /api/admin/settings/retention_metrics_days -d '{"value":"-5"}'
+assert_status "保留天數為負數回 400" 400
+
+call PUT /api/admin/settings/retention_metrics_days -d '{"value":"abc"}'
+assert_status "保留天數非整數回 400" 400
+
+call PUT /api/admin/settings/no_such_setting -d '{"value":"1"}'
+assert_status "不存在的設定回 404" 404
+
 # ═════════════════════════════════════════════════════════════════
 section "9. 閾值設定 API"
 # ═════════════════════════════════════════════════════════════════

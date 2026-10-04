@@ -116,6 +116,22 @@ public static ThresholdConfig cpu() {
 }
 ```
 
+### 資料保存期限與備份
+
+系統每天清除超過保留天數的資料（啟動 5 分鐘後首次執行）。天數可在網頁「系統設定」分頁調整（0–36500 天），修改後下一次執行即生效：
+
+| 設定 | 預設 | 清除範圍 |
+|---|---|---|
+| `retention_metrics_days` | 90 | CPU / 記憶體 / 磁碟指標 |
+| `retention_alerts_days` | 365 | 告警記錄（每個設備＋指標最後一筆狀態一律保留，避免未恢復的告警被當成已結束） |
+| `retention_audit_days` | 365 | 稽核日誌 |
+
+設為 `0` 代表永久保留。刪除後的空間會被重複利用，但 DB 檔案不會縮小。
+
+資料庫使用 SQLite **WAL 模式**，執行中會多出 `snmp_monitor.db-wal`、`snmp_monitor.db-shm` 兩個檔案。
+執行中備份請用 `sqlite3 snmp_monitor.db ".backup backup.db"`；若直接複製檔案，必須在程式停止後進行，
+或連同 `-wal` 檔一起複製，否則可能遺漏最近寫入的資料。
+
 ## 專案結構
 
 ```

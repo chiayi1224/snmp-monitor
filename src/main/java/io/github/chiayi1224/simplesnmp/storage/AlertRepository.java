@@ -46,6 +46,24 @@ final class AlertRepository {
         }
     }
 
+    /**
+     * 刪除 cutoff 之前的告警記錄，回傳刪除筆數。
+     * 每個「設備＋指標」最後一筆 TRIGGERED / RESOLVED 一律保留：
+     * hasOpen() 依它判斷告警是否仍開啟，刪掉會讓長期未恢復的告警被誤認為已結束。
+     */
+    int purgeBefore(String cutoff) throws SQLException {
+        return db.update("""
+            DELETE FROM alert_events
+            WHERE ts < ?
+              AND id NOT IN (
+                  SELECT id FROM alert_events a
+                  WHERE event_type IN ('TRIGGERED','RESOLVED')
+                    AND ts = (SELECT MAX(ts) FROM alert_events b
+                              WHERE b.device_name = a.device_name AND b.metric_name = a.metric_name
+                                AND b.event_type IN ('TRIGGERED','RESOLVED')))
+            """, cutoff);
+    }
+
     List<Map<String, Object>> query(String deviceName, int limit) {
         try {
             if (deviceName != null) {
