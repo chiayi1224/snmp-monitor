@@ -64,6 +64,8 @@ JettyServer (8080) ◄───────────────────�
    - 使用自己的 `USM` / `SecurityProtocols` 實例，不依賴 SNMP4J 的全域 singleton（全域實例預設沒有載入任何加密協定）。
    - `TrapReceiverEndToEndTest` 會在本機實際送出各版本 Trap 驗證，修改接收邏輯後請執行。
 
+5. `DiscoveryService`（`discovery` 套件）在單一背景執行緒執行 OID 掃描：系統資訊 → `VendorRegistry` 辨識廠牌 → `MibProbes` 探測常見 MIB →（選擇性）走訪子樹，結果存於 `device_scans`／`device_scan_results`，每台設備保留 3 次。新增探測項目只需在 `MibProbes.ALL` 加一筆。
+
 ### Web 層
 
 - `AuthFilter` 保護所有路由，僅放行 `/login.html` 與 `/api/auth/login`。
