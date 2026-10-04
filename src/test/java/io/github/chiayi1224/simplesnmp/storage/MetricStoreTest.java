@@ -7,6 +7,7 @@ import io.github.chiayi1224.simplesnmp.profile.MetricKind;
 import io.github.chiayi1224.simplesnmp.profile.MetricProfile;
 import io.github.chiayi1224.simplesnmp.profile.ProfileMetric;
 import io.github.chiayi1224.simplesnmp.threshold.AlertEvent;
+import io.github.chiayi1224.simplesnmp.threshold.ThresholdConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -566,5 +567,82 @@ class MetricStoreTest {
 
         assertNull(store.loadDevice("Core-SW").getProfileId());
         assertEquals(BuiltinProfiles.HOST_RESOURCES, store.queryDeviceByName("Core-SW").get("appliedProfileName"));
+    }
+
+    // ─── 自訂指標閾值 ─────────────────────────────────────────────
+
+    @Test
+    void 閾值_自訂指標未設定回傳null_內建三項有預設() {
+        assertNull(store.loadThresholdConfig("temperature"));
+        assertNotNull(store.loadThresholdConfig("cpu"));
+        assertNotNull(store.loadThresholdConfig("disk:/home"));
+        assertEquals("disk:/home", store.loadThresholdConfig("disk:/home").getMetricName());
+    }
+
+    @Test
+    void 閾值_新增自訂LOW方向後可載入_刪除後回到null() throws SQLException {
+        long id = store.createThreshold("free_ports", ThresholdConfig.Direction.LOW, 5, 8, 2, 2, "可用埠數");
+        assertTrue(store.thresholdExists("free_ports"));
+        assertEquals("free_ports", store.thresholdMetricName(id));
+
+        ThresholdConfig cfg = store.loadThresholdConfig("free_ports");
+        assertEquals(ThresholdConfig.Direction.LOW, cfg.getDirection());
+        assertEquals(5.0, cfg.getThreshold());
+        assertTrue(cfg.isExceeded(2));
+
+        Map<String, Object> row = store.queryAllThresholds().stream()
+            .filter(r -> "free_ports".equals(r.get("metricName"))).findFirst().orElseThrow();
+        assertEquals("LOW", row.get("direction"));
+        assertEquals(false, row.get("builtin"));
+
+        store.updateThreshold(id, ThresholdConfig.Direction.HIGH, 50, 40, 1, 1);
+        assertEquals(ThresholdConfig.Direction.HIGH, store.loadThresholdConfig("free_ports").getDirection());
+
+        store.deleteThreshold(id);
+        assertNull(store.loadThresholdConfig("free_ports"));
+        assertNull(store.thresholdMetricName(id));
+    }
+
+    @Test
+    void 閾值_內建三項方向為HIGH且標記builtin() {
+        List<Map<String, Object>> rows = store.queryAllThresholds();
+        assertEquals(3, rows.size());
+        for (Map<String, Object> r : rows) {
+            assertEquals("HIGH", r.get("direction"));
+            assertEquals(true, r.get("builtin"));
+        }
+    }
+
+    // ─── 自訂指標 ─────────────────────────────────────────────────
+
+    @Test
+    void 自訂指標_最新狀態每個指標取最後一筆_既有欄位不變() throws Exception {
+        store.saveCpu("SW-01", 10.0);
+        store.saveCustomMetric("SW-01", "temperature", 40.0, "°C");
+        Thread.sleep(5);   // 時間欄位為 ISO-8601 字串，間隔確保排序
+        store.saveCustomMetric("SW-01", "temperature", 45.0, "°C");
+        store.saveCustomMetric("SW-01", "free_ports", 3.0, "");
+
+        Map<String, Object> s = store.queryLatestStatus().stream()
+            .filter(m -> "SW-01".equals(m.get("deviceName"))).findFirst().orElseThrow();
+        assertEquals(List.of("deviceName", "cpu", "memory", "disks", "custom"), List.copyOf(s.keySet()));
+        assertNotNull(s.get("cpu"));
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> custom = (List<Map<String, Object>>) s.get("custom");
+        assertEquals(2, custom.size());
+        assertEquals("free_ports", custom.get(0).get("metricKey"));
+        assertEquals("temperature", custom.get(1).get("metricKey"));
+        assertEquals(45.0, custom.get(1).get("value"));
+        assertEquals("°C", custom.get(1).get("unit"));
+    }
+
+    @Test
+    void 自訂指標_只有自訂指標的設備也出現在狀態查詢() {
+        store.saveCustomMetric("UPS-01", "battery_pct", 98.0, "%");
+        Map<String, Object> s = store.queryLatestStatus().stream()
+            .filter(m -> "UPS-01".equals(m.get("deviceName"))).findFirst().orElseThrow();
+        assertNull(s.get("cpu"));
+        assertEquals(1, ((List<?>) s.get("custom")).size());
     }
 }

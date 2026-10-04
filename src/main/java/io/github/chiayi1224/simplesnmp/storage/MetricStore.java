@@ -28,7 +28,7 @@ import java.util.Map;
  * 本類別負責開啟連線、建立 schema、寫入預設資料，實際的 SQL 依資料表分散於各 Repository：
  *   users               — {@link UserRepository}      管理帳號（密碼 BCrypt hash）
  *   devices             — {@link DeviceRepository}    受監控設備清單
- *   cpu/mem/disk_metrics— {@link MetricRepository}    輪詢指標歷史
+ *   cpu/mem/disk/custom_metrics — {@link MetricRepository} 輪詢指標歷史
  *   alert_events        — {@link AlertRepository}     閾值狀態變化
  *   trap_oid_mappings / unknown_traps / unknown_sources — {@link TrapRepository}
  *   poll_oids           — {@link PollOidRepository}   Poll OID 設定
@@ -259,6 +259,10 @@ public class MetricStore implements AutoCloseable {
         metrics.saveDisk(deviceName, disks);
     }
 
+    public void saveCustomMetric(String deviceName, String metricKey, double value, String unit) {
+        metrics.saveCustom(deviceName, metricKey, value, unit);
+    }
+
     public void saveAlertEvent(AlertEvent event) {
         alerts.save(event);
     }
@@ -410,9 +414,34 @@ public class MetricStore implements AutoCloseable {
         return thresholds.queryAll();
     }
 
+    /** 更新閾值，方向設為 HIGH（內建三項的方向固定為 HIGH） */
     public void updateThreshold(long id, double threshold, double rearm,
                                 int triggerCount, int rearmCount) throws SQLException {
-        thresholds.update(id, threshold, rearm, triggerCount, rearmCount);
+        updateThreshold(id, ThresholdConfig.Direction.HIGH, threshold, rearm, triggerCount, rearmCount);
+    }
+
+    public void updateThreshold(long id, ThresholdConfig.Direction direction, double threshold, double rearm,
+                                int triggerCount, int rearmCount) throws SQLException {
+        thresholds.update(id, direction, threshold, rearm, triggerCount, rearmCount);
+    }
+
+    /** 指定編號閾值的指標名稱；不存在回傳 null */
+    public String thresholdMetricName(long id) throws SQLException {
+        return thresholds.metricNameOf(id);
+    }
+
+    public boolean thresholdExists(String metricName) throws SQLException {
+        return thresholds.exists(metricName);
+    }
+
+    /** 新增自訂指標閾值，回傳編號 */
+    public long createThreshold(String metricName, ThresholdConfig.Direction direction, double threshold,
+                                double rearm, int triggerCount, int rearmCount, String description) throws SQLException {
+        return thresholds.create(metricName, direction, threshold, rearm, triggerCount, rearmCount, description);
+    }
+
+    public void deleteThreshold(long id) throws SQLException {
+        thresholds.delete(id);
     }
 
     // ─── snmp_v3_users ────────────────────────────────────────────

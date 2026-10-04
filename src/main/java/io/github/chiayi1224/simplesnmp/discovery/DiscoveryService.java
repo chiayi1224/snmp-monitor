@@ -2,6 +2,7 @@ package io.github.chiayi1224.simplesnmp.discovery;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
+import io.github.chiayi1224.simplesnmp.config.OidConstants;
 import io.github.chiayi1224.simplesnmp.snmp.SnmpSession;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import org.slf4j.Logger;
@@ -36,7 +37,7 @@ public class DiscoveryService implements Closeable {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     static final String SYS_DESCR     = "1.3.6.1.2.1.1.1.0";
-    static final String SYS_OBJECT_ID = "1.3.6.1.2.1.1.2.0";
+    static final String SYS_OBJECT_ID = OidConstants.SYS_OBJECT_ID;
     static final String SYS_UPTIME    = "1.3.6.1.2.1.1.3.0";
     static final String SYS_NAME      = "1.3.6.1.2.1.1.5.0";
     static final String MIB2          = "1.3.6.1.2.1";

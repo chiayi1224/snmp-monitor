@@ -10,14 +10,15 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 閾值引擎（只處理 CPU / Memory / Disk）
+ * 閾值引擎
  *
  * 每次 poll 後呼叫對應的 evaluate 方法：
  *  - evaluateCpu()    傳入 cpu 使用率 %
  *  - evaluateMemory() 傳入 memory 使用率 %
  *  - evaluateDisks()  傳入 DiskInfo 清單
+ *  - evaluate()       自訂指標；沒有設定閾值時略過（只儲存、不告警）
  *
- * 狀態改變才寫 DB，不重複。
+ * 每次評估都重新讀取閾值設定，修改後下次 poll 立即生效。狀態改變才寫 DB，不重複。
  */
 public class ThresholdEngine {
 
@@ -53,6 +54,18 @@ public class ThresholdEngine {
         }
     }
 
+    // ─── 自訂指標 ─────────────────────────────────────────────────
+
+    public void evaluate(String deviceName, String metricKey, double value) {
+        ThresholdConfig config = store.loadThresholdConfig(metricKey);
+        if (config == null) {
+            // 閾值被刪除或從未設定：丟棄狀態，重新設定後從頭計數
+            states.remove(deviceName + "::" + metricKey);
+            return;
+        }
+        evaluate(deviceName, config, value);
+    }
+
     // ─── 核心狀態機 ───────────────────────────────────────────────
 
     private void evaluate(String deviceName, ThresholdConfig config, double value) {
@@ -61,19 +74,25 @@ public class ThresholdEngine {
         ThresholdState state = states.computeIfAbsent(
             key, k -> new ThresholdState(deviceName, config)
         );
+        state.updateConfig(config);
 
         AlertEvent event = state.evaluate(value);
 
         if (event != null) {
             store.saveAlertEvent(event);
 
+            boolean high = config.getDirection() == ThresholdConfig.Direction.HIGH;
             if (event.getType() == AlertEvent.Type.TRIGGERED) {
-                log.warn("🔴 TRIGGERED  {} {}={:.1f}% (>{:.1f}%)",
-                    deviceName, config.getMetricName(), value, config.getThreshold());
+                log.warn("🔴 TRIGGERED  {} {}={} ({}{})", deviceName, config.getMetricName(),
+                    fmt(value), high ? ">" : "<", fmt(config.getThreshold()));
             } else {
-                log.info("🟢 RESOLVED   {} {}={:.1f}% (<={:.1f}%)",
-                    deviceName, config.getMetricName(), value, config.getRearmValue());
+                log.info("🟢 RESOLVED   {} {}={} ({}{})", deviceName, config.getMetricName(),
+                    fmt(value), high ? "<=" : ">=", fmt(config.getRearmValue()));
             }
         }
+    }
+
+    private static String fmt(double v) {
+        return String.format("%.1f", v);
     }
 }

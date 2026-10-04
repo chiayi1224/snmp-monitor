@@ -29,7 +29,7 @@ public class ThresholdState {
     }
 
     private final String deviceName;
-    private final ThresholdConfig config;
+    private ThresholdConfig config;
 
     private State state            = State.NORMAL;
     private int   exceedCount      = 0;  // 連續超過次數
@@ -93,6 +93,11 @@ public class ThresholdState {
             state = State.TRIGGERED;
         }
         return null;
+    }
+
+    /** 套用最新的閾值設定（設定變更後下次評估立即生效，狀態與計數保留） */
+    public void updateConfig(ThresholdConfig config) {
+        this.config = config;
     }
 
     // ─── Getter ───────────────────────────────────────────────────

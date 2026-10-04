@@ -8,6 +8,7 @@ public final class OidConstants {
     private OidConstants() {}
 
     // ─── System ────────────────────────────────────────────────────
+    public static final String SYS_OBJECT_ID = "1.3.6.1.2.1.1.2.0";
     public static final String SYS_UPTIME = "1.3.6.1.2.1.1.3.0";
     public static final String SYS_NAME   = "1.3.6.1.2.1.1.5.0";
 

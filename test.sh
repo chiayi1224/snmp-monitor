@@ -400,6 +400,32 @@ call PUT "/api/admin/thresholds/${THRESHOLD_ID}" \
   -d '{"threshold":85,"rearm":90,"triggerCount":2,"rearmCount":2}'
 assert_status "rearm >= threshold 回 400" 400
 
+# ── 自訂指標閾值 ──────────────────────────────────────────────────
+call POST /api/admin/thresholds -d '{"metricName":"free_ports","direction":"LOW","threshold":5,"rearm":8,"triggerCount":2,"rearmCount":2,"description":"可用埠數"}'
+assert_status "新增自訂 LOW 閾值" 201
+CUSTOM_THRESHOLD_ID=$(jq_field '.id')
+
+call GET /api/admin/thresholds
+assert_contains "清單含自訂閾值方向 LOW" '"direction" : "LOW"'
+
+call POST /api/admin/thresholds -d '{"metricName":"free_ports","threshold":5,"rearm":8}'
+assert_status "自訂閾值名稱重複回 409" 409
+
+call POST /api/admin/thresholds -d '{"metricName":"cpu","threshold":90,"rearm":80}'
+assert_status "以內建名稱新增回 409" 409
+
+call POST /api/admin/thresholds -d '{"metricName":"temperature","direction":"LOW","threshold":5,"rearm":3}'
+assert_status "LOW 方向 rearm <= threshold 回 400" 400
+
+call PUT "/api/admin/thresholds/${CUSTOM_THRESHOLD_ID}" -d '{"direction":"HIGH","threshold":5000,"rearm":1000,"triggerCount":1,"rearmCount":1}'
+assert_status "自訂閾值可改方向且不限百分比" 200
+
+call DELETE "/api/admin/thresholds/${THRESHOLD_ID}"
+assert_status "刪除內建閾值回 403" 403
+
+call DELETE "/api/admin/thresholds/${CUSTOM_THRESHOLD_ID}"
+assert_status "刪除自訂閾值" 200
+
 # ═════════════════════════════════════════════════════════════════
 section "10. SNMPv3 使用者 API"
 # ═════════════════════════════════════════════════════════════════

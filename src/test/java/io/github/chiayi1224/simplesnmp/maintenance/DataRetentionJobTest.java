@@ -109,13 +109,16 @@ class DataRetentionJobTest {
         exec("INSERT INTO mem_metrics(ts, device_name, used_pct, total_kb, used_kb) VALUES(?, 'SW', 50, 100, 50)", daysAgo(120));
         exec("INSERT INTO disk_metrics(ts, device_name, mount_point, total_bytes, used_bytes, used_pct) VALUES(?, 'SW', '/', 100, 50, 50)", daysAgo(120));
         exec("INSERT INTO disk_metrics(ts, device_name, mount_point, total_bytes, used_bytes, used_pct) VALUES(?, 'SW', '/', 100, 50, 50)", daysAgo(10));
+        exec("INSERT INTO custom_metrics(ts, device_name, metric_key, value, unit) VALUES(?, 'SW', 'temperature', 45, '°C')", daysAgo(100));
+        exec("INSERT INTO custom_metrics(ts, device_name, metric_key, value, unit) VALUES(?, 'SW', 'temperature', 46, '°C')", daysAgo(2));
 
         DataRetentionJob.Result r = job.runOnce();
 
-        assertEquals(3, r.metrics());
+        assertEquals(4, r.metrics());
         assertEquals(2, count("cpu_metrics"));
         assertEquals(0, count("mem_metrics"));
         assertEquals(1, count("disk_metrics"));
+        assertEquals(1, count("custom_metrics"), "自訂指標同樣依 retention_metrics_days 清除");
     }
 
     @Test

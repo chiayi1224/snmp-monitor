@@ -28,12 +28,22 @@ public record ProfileMetric(String metricKey, MetricKind kind, Map<String, Strin
 
     /** 是否為 CPU / 記憶體 / 磁碟以外的自訂指標 */
     public boolean isCustom() {
-        return !CPU.equals(metricKey) && !MEMORY.equals(metricKey) && !DISK.equals(metricKey);
+        return isCustomKey(metricKey);
+    }
+
+    /** 指標名稱是否合法（小寫英文開頭，只含小寫英數與底線，2～32 字元） */
+    public static boolean isValidKey(String key) {
+        return key != null && KEY_PATTERN.matcher(key).matches();
+    }
+
+    /** 是否為 CPU / 記憶體 / 磁碟以外的指標名稱 */
+    public static boolean isCustomKey(String key) {
+        return !CPU.equals(key) && !MEMORY.equals(key) && !DISK.equals(key);
     }
 
     /** 合法回傳 null，否則回傳錯誤訊息 */
     public String validate() {
-        if (metricKey == null || !KEY_PATTERN.matcher(metricKey).matches()) {
+        if (!isValidKey(metricKey)) {
             return "指標名稱 '" + metricKey + "' 不合法：須為小寫英文開頭，只含小寫英數與底線，2～32 字元";
         }
         if (kind == null) {

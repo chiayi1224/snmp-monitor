@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 輪詢指標歷史（cpu_metrics / mem_metrics / disk_metrics）
+ * 輪詢指標歷史（cpu_metrics / mem_metrics / disk_metrics / custom_metrics）
  */
 final class MetricRepository {
 
@@ -51,20 +51,34 @@ final class MetricRepository {
         } catch (SQLException ex) { log.error("saveDisk: {}", ex.getMessage()); }
     }
 
+    void saveCustom(String deviceName, String metricKey, double value, String unit) {
+        try {
+            db.update("INSERT INTO custom_metrics(ts, device_name, metric_key, value, unit) VALUES(?,?,?,?,?)",
+                Db.now(), deviceName, metricKey, value, unit == null ? "" : unit);
+        } catch (SQLException ex) { log.error("saveCustom: {}", ex.getMessage()); }
+    }
+
     // ─── 資料保存期限 ─────────────────────────────────────────────
 
-    /** 刪除 cutoff 之前的 CPU / 記憶體 / 磁碟指標，回傳刪除筆數 */
+    /** 刪除 cutoff 之前的 CPU / 記憶體 / 磁碟 / 自訂指標，回傳刪除筆數 */
     int purgeBefore(String cutoff) throws SQLException {
-        return db.update("DELETE FROM cpu_metrics  WHERE ts < ?", cutoff)
-             + db.update("DELETE FROM mem_metrics  WHERE ts < ?", cutoff)
-             + db.update("DELETE FROM disk_metrics WHERE ts < ?", cutoff);
+        return db.update("DELETE FROM cpu_metrics    WHERE ts < ?", cutoff)
+             + db.update("DELETE FROM mem_metrics    WHERE ts < ?", cutoff)
+             + db.update("DELETE FROM disk_metrics   WHERE ts < ?", cutoff)
+             + db.update("DELETE FROM custom_metrics WHERE ts < ?", cutoff);
     }
 
     // ─── 查詢（Web API）───────────────────────────────────────────
 
     List<String> queryDeviceNames() {
         try {
-            return db.query("SELECT DISTINCT device_name FROM cpu_metrics ORDER BY device_name",
+            // 範本不一定包含 CPU，任何一張指標表有資料的設備都列出
+            return db.query("""
+                SELECT device_name FROM cpu_metrics
+                UNION SELECT device_name FROM mem_metrics
+                UNION SELECT device_name FROM disk_metrics
+                UNION SELECT device_name FROM custom_metrics
+                ORDER BY device_name""",
                 rs -> rs.getString("device_name"));
         } catch (SQLException ex) {
             log.error("queryDeviceNames: {}", ex.getMessage());
@@ -80,6 +94,7 @@ final class MetricRepository {
             row.put("cpu",    queryLatestCpu(device));
             row.put("memory", queryLatestMemory(device));
             row.put("disks",  queryLatestDisks(device));
+            row.put("custom", queryLatestCustom(device));
             result.add(row);
         }
         return result;
@@ -126,6 +141,28 @@ final class MetricRepository {
             }, device, device);
         } catch (SQLException ex) {
             log.error("queryLatestDisks: {}", ex.getMessage());
+            return new ArrayList<>();
+        }
+    }
+
+    /** 每個自訂指標的最新一筆，依指標名稱排序 */
+    List<Map<String, Object>> queryLatestCustom(String device) {
+        String sql = """
+            SELECT c.metric_key, c.value, c.unit, c.ts FROM custom_metrics c
+            WHERE c.device_name=? AND c.ts=(SELECT MAX(ts) FROM custom_metrics
+                                             WHERE device_name=c.device_name AND metric_key=c.metric_key)
+            ORDER BY c.metric_key""";
+        try {
+            return db.query(sql, rs -> {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("metricKey", rs.getString("metric_key"));
+                m.put("value",     rs.getDouble("value"));
+                m.put("unit",      rs.getString("unit"));
+                m.put("ts",        rs.getString("ts"));
+                return m;
+            }, device);
+        } catch (SQLException ex) {
+            log.error("queryLatestCustom: {}", ex.getMessage());
             return new ArrayList<>();
         }
     }

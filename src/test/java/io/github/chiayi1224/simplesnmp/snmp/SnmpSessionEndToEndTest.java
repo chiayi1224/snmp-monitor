@@ -95,6 +95,24 @@ class SnmpSessionEndToEndTest {
     }
 
     @Test
+    void v1_get_不存在的OID回noSuchName時移除後重送_其餘照常取得() throws Exception {
+        TestSnmpAgent a = agent();
+
+        Map<String, Variable> r = session.get(device(a).snmpVersion(DeviceConfig.SnmpVersion.V1).build(),
+            List.of("1.3.6.1.4.1.9.9.9.0", SYS_NAME, "1.3.6.1.4.1.9.9.8.0", SYS_DESCR));
+
+        assertEquals(List.of(SYS_NAME, SYS_DESCR), List.copyOf(r.keySet()));
+        assertEquals("agent-1", r.get(SYS_NAME).toString());
+    }
+
+    @Test
+    void v1_get_全部不存在回傳空結果() throws Exception {
+        TestSnmpAgent a = agent();
+        assertTrue(session.get(device(a).snmpVersion(DeviceConfig.SnmpVersion.V1).build(),
+            List.of("1.3.6.1.4.1.9.9.9.0")).isEmpty());
+    }
+
+    @Test
     void community錯誤_設備無回應() throws Exception {
         TestSnmpAgent a = agent();
 
