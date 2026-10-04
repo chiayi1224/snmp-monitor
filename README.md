@@ -179,7 +179,7 @@ src/main/java/io/github/chiayi1224/simplesnmp/
 | GET / PUT | `/api/admin/settings`、`/api/admin/settings/{key}` | 系統設定 |
 | GET / PUT | `/api/admin/thresholds`、`/api/admin/thresholds/{id}` | 閾值設定 |
 | GET / POST / PUT / DELETE | `/api/admin/poll-oids` | Poll OID |
-| GET / POST / PUT / DELETE | `/api/admin/tokens` | API Token |
+| GET / POST | `/api/admin/tokens`、`/api/admin/tokens/{id}` | API Token（更新或 `{"action":"delete"}` 刪除皆用 POST） |
 | GET | `/api/admin/audit-logs` | 稽核日誌 |
 
 ## License
