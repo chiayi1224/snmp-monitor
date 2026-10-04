@@ -215,6 +215,40 @@ final class SchemaManager {
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_logs(ts DESC)",
+
+        // OID 掃描：每次掃描一筆，probes_json 存 MIB 探測結果
+        """
+        CREATE TABLE IF NOT EXISTS device_scans (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_name   TEXT    NOT NULL,
+            started       TEXT    NOT NULL,
+            finished      TEXT,
+            status        TEXT    NOT NULL,
+            progress      TEXT    NOT NULL DEFAULT '',
+            error         TEXT,
+            walk          INTEGER NOT NULL DEFAULT 0,
+            sys_descr     TEXT,
+            sys_object_id TEXT,
+            sys_name      TEXT,
+            sys_uptime    TEXT,
+            vendor        TEXT,
+            probes_json   TEXT,
+            oid_count     INTEGER NOT NULL DEFAULT 0,
+            truncated     INTEGER NOT NULL DEFAULT 0
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_scan_device ON device_scans(device_name, id)",
+
+        // 掃描到的 OID（依走訪順序寫入，以 rowid 排序即為 OID 數字順序）
+        """
+        CREATE TABLE IF NOT EXISTS device_scan_results (
+            scan_id INTEGER NOT NULL,
+            oid     TEXT    NOT NULL,
+            type    TEXT    NOT NULL,
+            value   TEXT    NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_scan_result ON device_scan_results(scan_id, oid)",
     };
 
     /** 既有 DB 的欄位補丁（向下相容）；欄位已存在時 ALTER 會失敗，直接忽略 */
@@ -224,6 +258,12 @@ final class SchemaManager {
         "ALTER TABLE devices ADD COLUMN timeout_ms INTEGER NOT NULL DEFAULT 3000",
         "ALTER TABLE devices ADD COLUMN status TEXT NOT NULL DEFAULT 'UNKNOWN'",
         "ALTER TABLE devices ADD COLUMN last_seen TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE devices ADD COLUMN snmp_version TEXT NOT NULL DEFAULT '2c'",
+        "ALTER TABLE devices ADD COLUMN v3_user TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE devices ADD COLUMN v3_auth_protocol TEXT NOT NULL DEFAULT 'SHA'",
+        "ALTER TABLE devices ADD COLUMN v3_auth_password TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE devices ADD COLUMN v3_priv_protocol TEXT NOT NULL DEFAULT 'AES128'",
+        "ALTER TABLE devices ADD COLUMN v3_priv_password TEXT NOT NULL DEFAULT ''",
     };
 
     private final Db db;

@@ -1,6 +1,7 @@
 package io.github.chiayi1224.simplesnmp.storage;
 
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
+import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
 import io.github.chiayi1224.simplesnmp.model.DeviceStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,12 +27,8 @@ final class DeviceRepository {
     }
 
     List<DeviceConfig> loadEnabled() {
-        String sql = "SELECT name, host, port, community, retries, timeout_ms FROM devices WHERE enabled=1 ORDER BY name";
         try {
-            return db.query(sql, rs -> new DeviceConfig(
-                rs.getString("name"), rs.getString("host"),
-                rs.getInt("port"), rs.getString("community"),
-                rs.getInt("retries"), rs.getLong("timeout_ms")));
+            return db.query("SELECT * FROM devices WHERE enabled=1 ORDER BY name", DeviceRepository::toConfig);
         } catch (SQLException ex) {
             log.error("loadEnabledDevices 失敗: {}", ex.getMessage());
             return new ArrayList<>();
@@ -44,6 +41,16 @@ final class DeviceRepository {
         } catch (SQLException ex) {
             log.error("queryAllDevices 失敗: {}", ex.getMessage());
             return new ArrayList<>();
+        }
+    }
+
+    /** 依名稱載入單台設備的完整設定（含 v3 密碼，僅供內部連線使用），查無資料回傳 null */
+    DeviceConfig loadByName(String name) {
+        try {
+            return db.queryOne("SELECT * FROM devices WHERE name=?", DeviceRepository::toConfig, name);
+        } catch (SQLException ex) {
+            log.error("loadDeviceByName 失敗: {}", ex.getMessage());
+            return null;
         }
     }
 
@@ -62,6 +69,41 @@ final class DeviceRepository {
         String now = Db.now();
         db.update("INSERT INTO devices(name, host, port, community, retries, timeout_ms, enabled, created, updated) VALUES(?,?,?,?,?,?,1,?,?)",
             name, host, port, community, retries, timeoutMs, now, now);
+    }
+
+    /** 新增設備（含 SNMP 版本與 v3 設定；null 密碼視為未設定） */
+    void add(DeviceConfig d) throws SQLException {
+        String now = Db.now();
+        db.update("""
+            INSERT INTO devices(name, host, port, community, retries, timeout_ms,
+                                snmp_version, v3_user, v3_auth_protocol, v3_auth_password,
+                                v3_priv_protocol, v3_priv_password, enabled, created, updated)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)
+            """,
+            d.getName(), d.getHost(), d.getPort(), d.getCommunity(), d.getRetries(), d.getTimeoutMs(),
+            d.getSnmpVersion().label(), nz(d.getV3User()), d.getV3AuthProtocol().name(), nz(d.getV3AuthPassword()),
+            d.getV3PrivProtocol().name(), nz(d.getV3PrivPassword()), now, now);
+    }
+
+    /** 依名稱更新設備；v3 密碼為 null 時沿用資料庫中的舊值 */
+    void updateByName(DeviceConfig d, boolean enabled) throws SQLException {
+        db.update("""
+            UPDATE devices SET host=?, port=?, community=?, enabled=?, retries=?, timeout_ms=?,
+                   snmp_version=?, v3_user=?, v3_auth_protocol=?,
+                   v3_auth_password=COALESCE(?, v3_auth_password),
+                   v3_priv_protocol=?,
+                   v3_priv_password=COALESCE(?, v3_priv_password),
+                   updated=?
+            WHERE name=?
+            """,
+            d.getHost(), d.getPort(), d.getCommunity(), Db.flag(enabled), d.getRetries(), d.getTimeoutMs(),
+            d.getSnmpVersion().label(), nz(d.getV3User()), d.getV3AuthProtocol().name(),
+            d.getV3AuthPassword(), d.getV3PrivProtocol().name(), d.getV3PrivPassword(),
+            Db.now(), d.getName());
+    }
+
+    private static String nz(String s) {
+        return s == null ? "" : s;
     }
 
     /** 保留舊的呼叫方式，retries/timeout_ms 維持原值 */
@@ -110,10 +152,42 @@ final class DeviceRepository {
         row.put("enabled",   Db.bool(rs, "enabled"));
         row.put("retries",   rs.getInt("retries"));
         row.put("timeoutMs", rs.getLong("timeout_ms"));
+        row.put("snmpVersion",      rs.getString("snmp_version"));
+        row.put("v3User",           rs.getString("v3_user"));
+        row.put("v3AuthProtocol",   rs.getString("v3_auth_protocol"));
+        row.put("v3PrivProtocol",   rs.getString("v3_priv_protocol"));
+        // 不回傳密碼，只回傳是否已設定
+        row.put("v3AuthConfigured", !rs.getString("v3_auth_password").isEmpty());
+        row.put("v3PrivConfigured", !rs.getString("v3_priv_password").isEmpty());
         row.put("status",    rs.getString("status"));
         row.put("lastSeen",  rs.getString("last_seen"));
         row.put("created",   rs.getString("created"));
         row.put("updated",   rs.getString("updated"));
         return row;
+    }
+
+    private static DeviceConfig toConfig(ResultSet rs) throws SQLException {
+        return new DeviceConfig.Builder(rs.getString("name"), rs.getString("host"))
+            .port(rs.getInt("port"))
+            .community(rs.getString("community"))
+            .retries(rs.getInt("retries"))
+            .timeoutMs(rs.getLong("timeout_ms"))
+            .snmpVersion(parseVersion(rs.getString("snmp_version")))
+            .v3User(rs.getString("v3_user"))
+            .v3AuthProtocol(V3UserConfig.AuthProtocol.parse(rs.getString("v3_auth_protocol")))
+            .v3AuthPassword(rs.getString("v3_auth_password"))
+            .v3PrivProtocol(V3UserConfig.PrivProtocol.parse(rs.getString("v3_priv_protocol")))
+            .v3PrivPassword(rs.getString("v3_priv_password"))
+            .build();
+    }
+
+    /** 資料庫中的版本值異常時以 v2c 處理並記錄警告，避免整台設備無法載入 */
+    private static DeviceConfig.SnmpVersion parseVersion(String s) {
+        DeviceConfig.SnmpVersion v = DeviceConfig.SnmpVersion.parse(s);
+        if (v == null) {
+            log.warn("設備 SNMP 版本 '{}' 不合法，以 2c 處理", s);
+            return DeviceConfig.SnmpVersion.V2C;
+        }
+        return v;
     }
 }

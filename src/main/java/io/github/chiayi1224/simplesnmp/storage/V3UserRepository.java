@@ -89,12 +89,10 @@ final class V3UserRepository {
         V3UserConfig.Builder b = new V3UserConfig.Builder(rs.getString("username"));
         if (authPass != null && !authPass.isBlank()) {
             b.authPassword(authPass);
-            b.authProtocol("MD5".equalsIgnoreCase(rs.getString("auth_protocol"))
-                ? V3UserConfig.AuthProtocol.MD5 : V3UserConfig.AuthProtocol.SHA);
+            b.authProtocol(V3UserConfig.AuthProtocol.parse(rs.getString("auth_protocol")));
             if (privPass != null && !privPass.isBlank()) {
                 b.privPassword(privPass);
-                b.privProtocol("DES".equalsIgnoreCase(rs.getString("priv_protocol"))
-                    ? V3UserConfig.PrivProtocol.DES : V3UserConfig.PrivProtocol.AES128);
+                b.privProtocol(V3UserConfig.PrivProtocol.parse(rs.getString("priv_protocol")));
             }
         }
         return b.build();

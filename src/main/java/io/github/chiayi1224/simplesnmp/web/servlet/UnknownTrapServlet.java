@@ -13,6 +13,8 @@ import java.io.IOException;
  *   unknownOids    — 收到但 OID 不在對應表中的 Trap
  *   unknownSources — 來源 IP 不在設備清單中的 Trap
  *
+ * DELETE /api/admin/unknown-traps/oids/{id}、/api/admin/unknown-traps/sources/{id} 刪除單筆記錄
+ *
  * Response：
  * {
  *   "unknownOids": [
@@ -36,11 +38,34 @@ public class UnknownTrapServlet extends BaseJsonServlet {
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        if (pathName(req) != null) { writeError(resp, 404, "找不到路徑"); return; }
         try {
             java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();
             result.put("unknownOids",    store.queryUnknownTraps());
             result.put("unknownSources", store.queryUnknownSources());
             writeJson(resp, result);
+        } catch (Exception e) {
+            writeError(resp, 500, e.getMessage());
+        }
+    }
+
+    /**
+     * DELETE /api/admin/unknown-traps/oids/{id}     — 刪除一筆未定義 Trap
+     * DELETE /api/admin/unknown-traps/sources/{id}  — 刪除一筆未登錄來源
+     */
+    @Override
+    protected void doDelete(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        try {
+            String path = pathName(req);
+            String[] parts = path == null ? new String[0] : path.split("/");
+            long id = parts.length == 2 ? parseId(parts[1]) : -1;
+            if (id < 0 || !("oids".equals(parts[0]) || "sources".equals(parts[0]))) {
+                writeError(resp, 404, "找不到路徑");
+                return;
+            }
+            boolean deleted = "oids".equals(parts[0]) ? store.deleteUnknownTrap(id) : store.deleteUnknownSource(id);
+            if (!deleted) { writeError(resp, 404, "找不到記錄 #" + id); return; }
+            writeJson(resp, java.util.Map.of("message", "刪除成功", "id", id));
         } catch (Exception e) {
             writeError(resp, 500, e.getMessage());
         }

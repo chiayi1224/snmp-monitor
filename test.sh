@@ -254,6 +254,34 @@ assert_contains "更新後 host 為 10.0.0.1" "10.0.0.1"
 call POST "/api/admin/devices/NoSuchDevice" -d '{"action":"delete"}'
 assert_status "刪除不存在設備回 200（SQLite 刪除不報錯）" 200
 
+# ── SNMP 版本與 v3 ────────────────────────────────────────────────
+call POST /api/admin/devices -d '{"name":"Core-V3","host":"192.168.1.50","snmpVersion":"3","v3User":"monitor","v3AuthProtocol":"SHA256","v3AuthPassword":"authPass123","v3PrivProtocol":"AES256","v3PrivPassword":"privPass123"}'
+assert_status "新增 v3 設備" 201
+
+call POST /api/v1/devices/Core-V3 -d '{}'
+assert_contains "v3 設備版本為 3" '"snmpVersion" : "3"'
+assert_contains "v3 認證已設定" '"v3AuthConfigured" : true'
+assert_not_contains "回應不含認證密碼" "authPass123"
+assert_not_contains "回應不含加密密碼" "privPass123"
+
+call POST "/api/admin/devices/Core-V3" -d '{"host":"192.168.1.51"}'
+assert_status "更新 v3 設備（不帶密碼）" 200
+call POST /api/v1/devices/Core-V3 -d '{}'
+assert_contains "未帶密碼時沿用原密碼" '"v3PrivConfigured" : true'
+assert_contains "未帶版本時沿用 v3" '"snmpVersion" : "3"'
+
+call POST /api/admin/devices -d '{"name":"Bad-Ver","host":"192.168.1.60","snmpVersion":"4"}'
+assert_status "SNMP 版本不合法回 400" 400
+
+call POST /api/admin/devices -d '{"name":"Bad-V3","host":"192.168.1.61","snmpVersion":"3","v3User":"u","v3PrivPassword":"privPass123"}'
+assert_status "v3 只有加密沒有認證回 400" 400
+
+call POST /api/admin/devices -d '{"name":"Bad-V3","host":"192.168.1.61","snmpVersion":"3","v3User":"u","v3AuthPassword":"short"}'
+assert_status "v3 密碼少於 8 字元回 400" 400
+
+call POST "/api/admin/devices/Core-V3" -d '{"action":"delete"}'
+assert_status "刪除 v3 設備" 200
+
 # ═════════════════════════════════════════════════════════════════
 section "7. Trap OID 對應管理 API"
 # ═════════════════════════════════════════════════════════════════
@@ -282,6 +310,9 @@ assert_status "更新 Trap 對應" 200
 call POST /api/admin/trap-mappings -d '{"metricName":"","triggeredOid":"1.3.6.1.4.1.9999.5.1"}'
 assert_status "metricName 空白回 400" 400
 
+call POST /api/admin/trap-mappings -d '{"metricName":"dup","triggeredOid":"1.3.6.1.4.1.9999.4.1"}'
+assert_status "觸發 OID 重複回 409" 409
+
 call DELETE "/api/admin/trap-mappings/${TRAP_ID}"
 assert_status "刪除 Trap 對應" 200
 
@@ -292,6 +323,20 @@ assert_not_contains "刪除後 temperature 消失" "temperature"
 call POST /api/admin/trap-mappings \
   -d '{"metricName":"link-down","triggeredOid":"1.3.6.1.6.3.1.1.5.3","description":"連線中斷（無 resolved）"}'
 assert_status "新增無 resolvedOid 的對應" 201
+
+# 未定義 Trap / 未登錄來源的刪除
+call DELETE /api/admin/unknown-traps/oids/999999
+assert_status "刪除不存在的未定義 Trap 回 404" 404
+
+call DELETE /api/admin/unknown-traps/sources/999999
+assert_status "刪除不存在的未登錄來源回 404" 404
+
+call DELETE /api/admin/unknown-traps/other/1
+assert_status "未知的刪除路徑回 404" 404
+
+call GET /api/admin/unknown-traps
+assert_status "列出未定義 Trap" 200
+assert_contains "回應含 unknownOids" "unknownOids"
 
 # ═════════════════════════════════════════════════════════════════
 section "8. 系統設定 API"
@@ -513,6 +558,22 @@ assert_contains "含 LOGIN_SUCCESS" "LOGIN_SUCCESS"
 
 call POST /api/admin/audit-logs -d '{"eventType":"LOGIN_FAIL","limit":10}'
 assert_status "查詢 LOGIN_FAIL" 200
+
+# ═════════════════════════════════════════════════════════════════
+section "16-1. OID 掃描 API"
+# ═════════════════════════════════════════════════════════════════
+
+call POST /api/admin/discovery/scans -d '{"deviceName":"NoSuchDevice"}'
+assert_status "掃描不存在的設備回 404" 404
+
+call POST /api/admin/discovery/scans -d '{"deviceName":"Router-01","walk":true,"subtrees":["1.3.6.1; drop"]}'
+assert_status "子樹格式不正確回 400" 400
+
+call GET /api/admin/discovery/scans
+assert_status "列出掃描" 200
+
+call GET /api/admin/discovery/scans/999999
+assert_status "不存在的掃描回 404" 404
 
 # ═════════════════════════════════════════════════════════════════
 section "17. 登出後保護"

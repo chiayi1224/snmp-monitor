@@ -4,20 +4,13 @@ import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.config.OidConstants;
 import io.github.chiayi1224.simplesnmp.model.DeviceStatus;
 import io.github.chiayi1224.simplesnmp.model.DiskInfo;
+import io.github.chiayi1224.simplesnmp.snmp.SnmpException;
+import io.github.chiayi1224.simplesnmp.snmp.SnmpSession;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import io.github.chiayi1224.simplesnmp.threshold.ThresholdEngine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.snmp4j.CommunityTarget;
-import org.snmp4j.PDU;
-import org.snmp4j.Snmp;
-import org.snmp4j.event.ResponseEvent;
-import org.snmp4j.mp.SnmpConstants;
-import org.snmp4j.smi.*;
-import org.snmp4j.transport.DefaultUdpTransportMapping;
-import org.snmp4j.util.DefaultPDUFactory;
-import org.snmp4j.util.TableEvent;
-import org.snmp4j.util.TableUtils;
+import org.snmp4j.smi.Variable;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -41,20 +34,28 @@ public class SnmpPoller {
     private final long            intervalSeconds;
     private final ThresholdEngine thresholdEngine;
 
-    private Snmp snmp;
+    /** hrStorage 表格最多讀取的筆數（每列 5 個欄位） */
+    private static final int STORAGE_MAX_ROWS = 5_000;
+
+    private SnmpSession session;
     private ScheduledExecutorService scheduler;
 
     public SnmpPoller(MetricStore store, long intervalSeconds) {
+        this(store, intervalSeconds, null);
+    }
+
+    /** 測試用：注入已建立的 SnmpSession */
+    SnmpPoller(MetricStore store, long intervalSeconds, SnmpSession session) {
         this.store           = store;
         this.intervalSeconds = intervalSeconds;
         this.thresholdEngine = new ThresholdEngine(store);
+        this.session         = session;
     }
 
     // ─── 啟動 / 停止 ─────────────────────────────────────────────
 
     public void start() throws IOException {
-        snmp = new Snmp(new DefaultUdpTransportMapping());
-        snmp.listen();
+        if (session == null) session = new SnmpSession();
 
         scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "snmp-poller");
@@ -67,14 +68,15 @@ public class SnmpPoller {
 
     public void stop() {
         if (scheduler != null) scheduler.shutdown();
-        if (snmp != null) {
-            try { snmp.close(); } catch (IOException ignored) {}
+        if (session != null) {
+            try { session.close(); } catch (IOException ignored) {}
         }
     }
 
     // ─── 主流程 ───────────────────────────────────────────────────
 
-    private void pollAll() {
+    /** 執行一輪輪詢（排程呼叫；測試可直接呼叫） */
+    void pollAll() {
         // 每次 poll 前從 DB 重新讀取設備清單與 OID 設定，立即反映 Web 的設定異動
         List<DeviceConfig> devices    = store.loadEnabledDevices();
         List<String>       scalarOids = store.loadEnabledScalarOids();
@@ -113,21 +115,18 @@ public class SnmpPoller {
             log.debug("[{}] Ping 成功", name);
         }
 
-        // ── 第二層：SNMP GET（CPU + Memory）──────────────────────
-        Map<String, String> scalars = getScalars(device, scalarOids);
-
-        // SNMP 無回應（有 OID 要查但回傳空）→ SNMP_ERROR
-        if (!scalarOids.isEmpty() && scalars.isEmpty()) {
-            log.warn("[{}] SNMP GET 無回應，標記 SNMP_ERROR", name);
+        // ── 第二層：SNMP GET（CPU + Memory）與 WALK（Disk）────────
+        // 設備無回應、v3 認證失敗等 → SNMP_ERROR（SnmpSession 會清除 v3 engine ID 快取）
+        try {
+            Map<String, String> scalars = getScalars(device, scalarOids);
+            recordCpu(name, scalars);
+            recordMemory(name, scalars);
+            if (diskEnabled) recordDisks(device);
+        } catch (SnmpException e) {
+            log.warn("[{}] SNMP 查詢失敗，標記 SNMP_ERROR：{}", name, e.getMessage());
             updateStatus(name, DeviceStatus.SNMP_ERROR);
             return;
         }
-
-        recordCpu(name, scalars);
-        recordMemory(name, scalars);
-
-        // ── WALK：Disk ────────────────────────────────────────────
-        if (diskEnabled) recordDisks(device);
 
         // Ping + SNMP 均正常
         updateStatus(name, DeviceStatus.ONLINE);
@@ -178,22 +177,11 @@ public class SnmpPoller {
 
     // ─── GET ──────────────────────────────────────────────────────
 
+    /** GET 指定 OID，回傳 OID → 值字串；設備不支援的 OID 不會出現在結果中 */
     private Map<String, String> getScalars(DeviceConfig device, List<String> oids) throws IOException {
-        if (oids.isEmpty()) return new LinkedHashMap<>();
-        CommunityTarget<UdpAddress> target = buildTarget(device);
-        PDU pdu = new PDU();
-        pdu.setType(PDU.GET);
-        for (String oid : oids) {
-            pdu.add(new VariableBinding(new OID(oid)));
-        }
-        ResponseEvent<?> event = snmp.get(pdu, target);
         Map<String, String> result = new LinkedHashMap<>();
-        if (event == null || event.getResponse() == null) {
-            log.warn("[{}] GET 無回應", device.getName());
-            return result;
-        }
-        for (VariableBinding vb : event.getResponse().getVariableBindings()) {
-            result.put(vb.getOid().toString(), vb.getVariable().toString());
+        for (Map.Entry<String, Variable> e : session.get(device, oids).entrySet()) {
+            result.put(e.getKey(), e.getValue().toString());
         }
         return result;
     }
@@ -201,40 +189,8 @@ public class SnmpPoller {
     // ─── WALK ─────────────────────────────────────────────────────
 
     private List<DiskInfo> getDiskInfo(DeviceConfig device) throws IOException {
-        CommunityTarget<UdpAddress> target = buildTarget(device);
-        OID[] columnOids = {
-            new OID(OidConstants.HR_STORAGE_TYPE),
-            new OID(OidConstants.HR_STORAGE_DESCR),
-            new OID(OidConstants.HR_STORAGE_UNIT),
-            new OID(OidConstants.HR_STORAGE_SIZE),
-            new OID(OidConstants.HR_STORAGE_USED)
-        };
-        TableUtils tableUtils = new TableUtils(snmp, new DefaultPDUFactory(PDU.GETNEXT));
-        List<TableEvent> rows = tableUtils.getTable(target, columnOids, null, null);
-        List<DiskInfo> result = new ArrayList<>();
-        OID fixedDiskType = new OID(OidConstants.HR_STORAGE_TYPE_FIXED_DISK);
-        for (TableEvent row : rows) {
-            if (row.isError()) continue;
-            VariableBinding[] cols = row.getColumns();
-            if (cols == null || cols.length < 5) continue;
-            Variable typeVar = cols[0] != null ? cols[0].getVariable() : null;
-            if (typeVar == null || !typeVar.toString().equals(fixedDiskType.toString())) continue;
-            String mountPoint = cols[1] != null ? cols[1].getVariable().toString() : "unknown";
-            long   allocUnit  = cols[2] != null ? cols[2].getVariable().toLong()   : 1L;
-            long   sizeUnits  = cols[3] != null ? cols[3].getVariable().toLong()   : 0L;
-            long   usedUnits  = cols[4] != null ? cols[4].getVariable().toLong()   : 0L;
-            result.add(new DiskInfo(mountPoint, sizeUnits * allocUnit, usedUnits * allocUnit));
-        }
-        return result;
-    }
-
-    private CommunityTarget<UdpAddress> buildTarget(DeviceConfig device) {
-        CommunityTarget<UdpAddress> target = new CommunityTarget<>();
-        target.setCommunity(new OctetString(device.getCommunity()));
-        target.setAddress((UdpAddress) GenericAddress.parse(device.getUdpAddress()));
-        target.setVersion(SnmpConstants.version2c);
-        target.setRetries(device.getRetries());
-        target.setTimeout(device.getTimeoutMs());
-        return target;
+        SnmpSession.WalkResult walk = session.walk(device, OidConstants.HR_STORAGE_ENTRY, STORAGE_MAX_ROWS, 0);
+        if (walk.error() != null) log.warn("[{}] 磁碟表讀取中斷：{}", device.getName(), walk.error());
+        return PollParser.disks(walk.rows());
     }
 }

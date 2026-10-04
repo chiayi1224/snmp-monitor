@@ -1,11 +1,18 @@
 package io.github.chiayi1224.simplesnmp.storage;
 
+import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
+import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
 import io.github.chiayi1224.simplesnmp.threshold.AlertEvent;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
 
@@ -269,5 +276,210 @@ class MetricStoreTest {
         }
         List<Map<String, Object>> alerts = store.queryAlerts(null, 3);
         assertEquals(3, alerts.size());
+    }
+
+    // ─── 設備 SNMP 版本與 v3 設定 ───────────────────────────────
+
+    @Test
+    void 舊版schema的設備升級後為v2c(@TempDir Path dir) throws Exception {
+        String dbPath = dir.resolve("old.db").toString();
+        // 模擬升級前的 devices 資料表（沒有 snmp_version 與 v3 欄位）
+        try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
+             Statement st = c.createStatement()) {
+            st.execute("""
+                CREATE TABLE devices (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, host TEXT NOT NULL,
+                    port INTEGER NOT NULL DEFAULT 161, community TEXT NOT NULL DEFAULT 'public',
+                    enabled INTEGER NOT NULL DEFAULT 1, created TEXT NOT NULL, updated TEXT NOT NULL)
+                """);
+            st.execute("INSERT INTO devices(name, host, created, updated) VALUES('Legacy', '10.0.0.1', 'x', 'x')");
+        }
+
+        try (MetricStore upgraded = new MetricStore(dbPath)) {
+            DeviceConfig d = upgraded.loadDevice("Legacy");
+            assertEquals(DeviceConfig.SnmpVersion.V2C, d.getSnmpVersion());
+            assertEquals("2c", upgraded.queryDeviceByName("Legacy").get("snmpVersion"));
+            assertEquals(1, upgraded.loadEnabledDevices().size());
+        }
+    }
+
+    private static DeviceConfig v3Device(String host, String auth, String priv) {
+        return new DeviceConfig.Builder("Core-SW", host)
+            .snmpVersion(DeviceConfig.SnmpVersion.V3).v3User("monitor")
+            .v3AuthProtocol(V3UserConfig.AuthProtocol.SHA256).v3AuthPassword(auth)
+            .v3PrivProtocol(V3UserConfig.PrivProtocol.AES256).v3PrivPassword(priv)
+            .build();
+    }
+
+    @Test
+    void v3設備_完整設定可載入() throws SQLException {
+        store.addDevice(v3Device("10.0.0.9", "authPass1", "privPass1"));
+
+        DeviceConfig d = store.loadDevice("Core-SW");
+        assertEquals(DeviceConfig.SnmpVersion.V3, d.getSnmpVersion());
+        assertEquals("monitor", d.getV3User());
+        assertEquals(V3UserConfig.AuthProtocol.SHA256, d.getV3AuthProtocol());
+        assertEquals("authPass1", d.getV3AuthPassword());
+        assertEquals(V3UserConfig.PrivProtocol.AES256, d.getV3PrivProtocol());
+        assertEquals("privPass1", d.getV3PrivPassword());
+    }
+
+    @Test
+    void v3設備_查詢結果不含密碼() throws SQLException {
+        store.addDevice(v3Device("10.0.0.9", "authPass1", "privPass1"));
+
+        Map<String, Object> row = store.queryDeviceByName("Core-SW");
+        assertEquals(true, row.get("v3AuthConfigured"));
+        assertEquals(true, row.get("v3PrivConfigured"));
+        assertEquals("SHA256", row.get("v3AuthProtocol"));
+        String all = store.queryAllDevices().toString() + row;
+        assertFalse(all.contains("authPass1"));
+        assertFalse(all.contains("privPass1"));
+    }
+
+    @Test
+    void v3設備_更新時密碼為null沿用舊值_空字串清除() throws SQLException {
+        store.addDevice(v3Device("10.0.0.9", "authPass1", "privPass1"));
+
+        store.updateDeviceByName(v3Device("10.0.0.10", null, null), true);
+        DeviceConfig kept = store.loadDevice("Core-SW");
+        assertEquals("10.0.0.10", kept.getHost());
+        assertEquals("authPass1", kept.getV3AuthPassword());
+        assertEquals("privPass1", kept.getV3PrivPassword());
+
+        store.updateDeviceByName(v3Device("10.0.0.10", null, ""), true);
+        assertEquals("", store.loadDevice("Core-SW").getV3PrivPassword());
+        assertEquals(false, store.queryDeviceByName("Core-SW").get("v3PrivConfigured"));
+    }
+
+    // ─── OID 掃描結果 ─────────────────────────────────────────────
+
+    private long completedScan(String device, String... oids) throws SQLException {
+        long id = store.createScan(device, true);
+        List<String[]> rows = new java.util.ArrayList<>();
+        for (String oid : oids) rows.add(new String[]{ oid, "OCTET STRING", "value-of-" + oid });
+        store.addScanResults(id, rows);
+        store.finishScan(id, "COMPLETED", null, false);
+        return id;
+    }
+
+    @Test
+    void 掃描_完成後記錄筆數與狀態() throws SQLException {
+        long id = completedScan("SW", "1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.5.0");
+
+        Map<String, Object> scan = store.queryScan(id);
+        assertEquals("COMPLETED", scan.get("status"));
+        assertEquals(2L, scan.get("oidCount"));
+        assertEquals(false, scan.get("truncated"));
+        assertNotNull(scan.get("finished"));
+    }
+
+    @Test
+    void 掃描_每台設備只保留最近3次() throws SQLException {
+        long first = completedScan("SW", "1.3.6.1.2.1.1.1.0");
+        for (int i = 0; i < 3; i++) completedScan("SW", "1.3.6.1.2.1.1.1.0");
+        completedScan("Other", "1.3.6.1.2.1.1.1.0");
+
+        store.pruneScans("SW", 3);
+
+        assertEquals(3, store.queryScans("SW").size());
+        assertNull(store.queryScan(first), "最舊的掃描應被刪除");
+        assertEquals(0L, store.queryScanOids(first, null, null, 0, 100).get("total"), "結果也應一併刪除");
+        assertEquals(1, store.queryScans("Other").size(), "其他設備不受影響");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 掃描_依前綴篩選且不誤判相似前綴() throws SQLException {
+        long id = completedScan("SW",
+            "1.3.6.1.2.1.2.2.1.2.1", "1.3.6.1.2.1.2.2.1.2.2", "1.3.6.1.2.1.2.20.1", "1.3.6.1.2.1.1.5.0");
+
+        Map<String, Object> r = store.queryScanOids(id, "1.3.6.1.2.1.2.2", null, 0, 100);
+
+        assertEquals(2L, r.get("total"));
+        List<Map<String, Object>> items = (List<Map<String, Object>>) r.get("items");
+        assertEquals("1.3.6.1.2.1.2.2.1.2.1", items.get(0).get("oid"));
+    }
+
+    @Test
+    void 掃描_依值關鍵字篩選並跳脫萬用字元() throws SQLException {
+        long id = store.createScan("SW", true);
+        store.addScanResults(id, List.of(
+            new String[]{ "1.1", "OCTET STRING", "GigabitEthernet0/1" },
+            new String[]{ "1.2", "OCTET STRING", "100%_used" },
+            new String[]{ "1.3", "OCTET STRING", "Loopback0" }));
+
+        assertEquals(1L, store.queryScanOids(id, null, "gigabit", 0, 100).get("total"));
+        assertEquals(1L, store.queryScanOids(id, null, "%_", 0, 100).get("total"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 掃描_分頁() throws SQLException {
+        String[] oids = new String[25];
+        for (int i = 0; i < 25; i++) oids[i] = "1.3.6." + (i + 1);
+        long id = completedScan("SW", oids);
+
+        Map<String, Object> page = store.queryScanOids(id, null, null, 20, 10);
+
+        assertEquals(25L, page.get("total"));
+        List<Map<String, Object>> items = (List<Map<String, Object>>) page.get("items");
+        assertEquals(5, items.size());
+        assertEquals("1.3.6.21", items.get(0).get("oid"), "依寫入順序（走訪順序）排列");
+    }
+
+    @Test
+    void 掃描_重新啟動時未完成的掃描標記為失敗(@TempDir Path dir) throws Exception {
+        String dbPath = dir.resolve("scan.db").toString();
+        long id;
+        try (MetricStore first = new MetricStore(dbPath)) {
+            id = first.createScan("SW", false);
+        }
+        try (MetricStore reopened = new MetricStore(dbPath)) {
+            Map<String, Object> scan = reopened.queryScan(id);
+            assertEquals("FAILED", scan.get("status"));
+            assertTrue(scan.get("error").toString().contains("重啟"));
+        }
+    }
+
+    // ─── 未定義 Trap / 未登錄來源 ─────────────────────────────────
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 未定義Trap_刪除後同OID再次寫入從1計次() throws SQLException {
+        store.saveUnknownTrap("1.3.6.1.4.1.9999.0.7", "SW", "10.0.0.1", "a");
+        store.saveUnknownTrap("1.3.6.1.4.1.9999.0.7", "SW", "10.0.0.1", "b");
+        long id = (Long) store.queryUnknownTraps().get(0).get("id");
+        assertEquals(2, store.queryUnknownTraps().get(0).get("count"));
+
+        assertTrue(store.deleteUnknownTrap(id));
+        assertFalse(store.deleteUnknownTrap(id), "第二次刪除應回傳 false");
+        store.saveUnknownTrap("1.3.6.1.4.1.9999.0.7", "SW", "10.0.0.1", "c");
+
+        assertEquals(1, store.queryUnknownTraps().get(0).get("count"));
+    }
+
+    @Test
+    void 未登錄來源_依ID與依IP刪除() throws SQLException {
+        store.saveUnknownSource("10.0.0.98", "1.3.6.1", "");
+        store.saveUnknownSource("10.0.0.99", "1.3.6.1", "");
+        long id = (Long) store.queryUnknownSources().stream()
+            .filter(r -> "10.0.0.98".equals(r.get("sourceIp"))).findFirst().orElseThrow().get("id");
+
+        assertTrue(store.deleteUnknownSource(id));
+        store.deleteUnknownSourceByIp("10.0.0.99");
+
+        assertTrue(store.queryUnknownSources().isEmpty());
+    }
+
+    @Test
+    void 觸發OID重複檢查排除自己() throws SQLException {
+        store.addTrapMapping("fan", "1.3.6.1.4.1.9999.0.7", null, "");
+        long id = (Long) store.queryAllTrapMappings().stream()
+            .filter(r -> "fan".equals(r.get("metricName"))).findFirst().orElseThrow().get("id");
+
+        assertTrue (store.trapTriggeredOidExists("1.3.6.1.4.1.9999.0.7", -1));
+        assertFalse(store.trapTriggeredOidExists("1.3.6.1.4.1.9999.0.7", id));
+        assertFalse(store.trapTriggeredOidExists("1.3.6.1.4.1.9999.0.8", -1));
     }
 }

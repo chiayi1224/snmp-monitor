@@ -27,9 +27,11 @@ import org.snmp4j.mp.MPv1;
 import org.snmp4j.mp.MPv2c;
 import org.snmp4j.mp.MPv3;
 import org.snmp4j.mp.SnmpConstants;
+import org.snmp4j.security.AuthHMAC192SHA256;
 import org.snmp4j.security.AuthMD5;
 import org.snmp4j.security.AuthSHA;
 import org.snmp4j.security.PrivAES128;
+import org.snmp4j.security.PrivAES256;
 import org.snmp4j.security.PrivDES;
 import org.snmp4j.security.SecurityLevel;
 import org.snmp4j.security.SecurityModel;
@@ -89,6 +91,8 @@ class TrapReceiverEndToEndTest {
             AuthSHA.ID, new OctetString("authPass123"), PrivAES128.ID, new OctetString("privPass123")));
         usm.addUser(new UsmUser(new OctetString("legacyUser"),
             AuthMD5.ID, new OctetString("legacyAuth1"), PrivDES.ID, new OctetString("legacyPriv1")));
+        usm.addUser(new UsmUser(new OctetString("modernUser"),
+            AuthHMAC192SHA256.ID, new OctetString("modernAuth1"), PrivAES256.ID, new OctetString("modernPriv1")));
         usm.addUser(new UsmUser(new OctetString("wrongUser"),
             AuthSHA.ID, new OctetString("wrongPass123"), PrivAES128.ID, new OctetString("wrongPass123")));
 
@@ -143,6 +147,16 @@ class TrapReceiverEndToEndTest {
         AlertEvent e = awaitAlert();
         assertEquals("Local", e.getDeviceName());
         assertEquals("cpu",   e.getMetricName());
+    }
+
+    @Test
+    void 新增設備後_同IP的Trap立即以新設備名稱記錄() throws Exception {
+        receiver.reloadDevices(List.of(new DeviceConfig("Router-02", "127.0.0.1", "public")));
+
+        sender.send(v2Trap(PDU.TRAP, CPU_HIGH), communityTarget(SnmpConstants.version2c, "public"));
+
+        assertEquals("Router-02", awaitAlert().getDeviceName());
+        verify(store, never()).saveUnknownSource(any(), any(), any());
     }
 
     @Test
@@ -260,6 +274,18 @@ class TrapReceiverEndToEndTest {
             .build()));
 
         sender.send(v3Trap(CPU_HIGH), userTarget("legacyUser"));
+
+        awaitAlert();
+    }
+
+    @Test
+    void v3_SHA256_AES256_產生告警() throws Exception {
+        receiver.reloadV3Users(List.of(new V3UserConfig.Builder("modernUser")
+            .authPassword("modernAuth1").authProtocol(V3UserConfig.AuthProtocol.SHA256)
+            .privPassword("modernPriv1").privProtocol(V3UserConfig.PrivProtocol.AES256)
+            .build()));
+
+        sender.send(v3Trap(CPU_HIGH), userTarget("modernUser"));
 
         awaitAlert();
     }

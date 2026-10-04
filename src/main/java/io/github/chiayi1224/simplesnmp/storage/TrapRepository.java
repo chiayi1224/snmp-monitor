@@ -174,6 +174,27 @@ final class TrapRepository {
         }
     }
 
+    /** 刪除一筆未定義 Trap 記錄；回傳是否有刪到 */
+    boolean deleteUnknownTrap(long id) throws SQLException {
+        return db.update("DELETE FROM unknown_traps WHERE id=?", id) > 0;
+    }
+
+    /** 刪除一筆未登錄來源記錄；回傳是否有刪到 */
+    boolean deleteUnknownSource(long id) throws SQLException {
+        return db.update("DELETE FROM unknown_sources WHERE id=?", id) > 0;
+    }
+
+    /** 依來源 IP 刪除未登錄來源記錄（該 IP 已新增為設備時使用） */
+    void deleteUnknownSourceByIp(String sourceIp) throws SQLException {
+        db.update("DELETE FROM unknown_sources WHERE source_ip=?", sourceIp);
+    }
+
+    /** 觸發 OID 是否已存在於其他對應（excludeId 為更新中的那一筆，新增時傳 -1） */
+    boolean triggeredOidExists(String triggeredOid, long excludeId) throws SQLException {
+        return db.queryLong("SELECT COUNT(*) FROM trap_oid_mappings WHERE triggered_oid=? AND id != ?",
+            triggeredOid, excludeId) > 0;
+    }
+
     private static String blankToNull(String s) {
         return s == null || s.isBlank() ? null : s;
     }

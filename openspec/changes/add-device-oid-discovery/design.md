@@ -62,7 +62,7 @@ USM 使用者表以（engineID, username）為鍵。若以未本地化方式加�
 - `GET /api/admin/discovery/scans/{id}/oids?prefix=&q=&offset=&limit=` → OID 明細分頁（`limit` 上限 500）。
 - `DELETE /api/admin/unknown-traps/oids/{id}`、`DELETE /api/admin/unknown-traps/sources/{id}`。
 - `POST /api/admin/trap-mappings` 新增選填 `fromUnknownId`：建立成功後刪除該筆未定義記錄；觸發 OID 重複時回 409（目前 UNIQUE 違反會變成 500）。
-- `POST /api/admin/devices` 新增選填 `fromUnknownSourceId`：建立成功後刪除該筆未登錄來源記錄。
+- `POST /api/admin/devices` 建立設備成功後，刪除來源 IP 等於該設備 host 的未登錄來源記錄（不論是否從未登錄來源清單建立，該 IP 都已不再是未登錄來源；因此不需要額外的 `fromUnknownSourceId` 參數）。
 
 ### D8. 前端
 沿用 `index.html` 單檔結構，新增「OID 探索」與「Trap 對應」兩個 `<section>` 與對應的 `load*()` 函式；所有插入表格的值一律經過 `esc()`（OID 值、sysDescr、VarBind 都可能含設備端可控的字串）。設備對話框依版本切換顯示 community 或 v3 欄位。

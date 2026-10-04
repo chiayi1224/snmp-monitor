@@ -53,4 +53,41 @@ class V3UserConfigTest {
         assertEquals(AuthMD5.ID, u.getAuthProtocolOid());
         assertEquals(PrivDES.ID, u.getPrivProtocolOid());
     }
+
+    // ─── 協定擴充與字串解析 ──────────────────────────────────────
+
+    @Test
+    void 各認證協定對應SNMP4J的OID() {
+        assertEquals(AuthMD5.ID,                                   V3UserConfig.AuthProtocol.MD5.oid());
+        assertEquals(AuthSHA.ID,                                   V3UserConfig.AuthProtocol.SHA.oid());
+        assertEquals(org.snmp4j.security.AuthHMAC128SHA224.ID,     V3UserConfig.AuthProtocol.SHA224.oid());
+        assertEquals(org.snmp4j.security.AuthHMAC192SHA256.ID,     V3UserConfig.AuthProtocol.SHA256.oid());
+        assertEquals(org.snmp4j.security.AuthHMAC256SHA384.ID,     V3UserConfig.AuthProtocol.SHA384.oid());
+        assertEquals(org.snmp4j.security.AuthHMAC384SHA512.ID,     V3UserConfig.AuthProtocol.SHA512.oid());
+    }
+
+    @Test
+    void 各加密協定對應SNMP4J的OID() {
+        assertEquals(PrivDES.ID,                          V3UserConfig.PrivProtocol.DES.oid());
+        assertEquals(PrivAES128.ID,                       V3UserConfig.PrivProtocol.AES128.oid());
+        assertEquals(org.snmp4j.security.PrivAES192.ID,   V3UserConfig.PrivProtocol.AES192.oid());
+        assertEquals(org.snmp4j.security.PrivAES256.ID,   V3UserConfig.PrivProtocol.AES256.oid());
+    }
+
+    @Test
+    void 解析_大小寫與連字號不敏感() {
+        assertEquals(V3UserConfig.AuthProtocol.SHA256, V3UserConfig.AuthProtocol.parse("sha-256"));
+        assertEquals(V3UserConfig.AuthProtocol.MD5,    V3UserConfig.AuthProtocol.parse(" md5 "));
+        assertEquals(V3UserConfig.PrivProtocol.AES256, V3UserConfig.PrivProtocol.parse("AES-256"));
+        assertEquals(V3UserConfig.PrivProtocol.AES128, V3UserConfig.PrivProtocol.parse("aes"));
+        assertEquals(V3UserConfig.PrivProtocol.DES,    V3UserConfig.PrivProtocol.parse("des"));
+    }
+
+    @Test
+    void 解析_未知或空值回預設() {
+        assertEquals(V3UserConfig.AuthProtocol.SHA,    V3UserConfig.AuthProtocol.parse("SHA-999"));
+        assertEquals(V3UserConfig.AuthProtocol.SHA,    V3UserConfig.AuthProtocol.parse(null));
+        assertEquals(V3UserConfig.PrivProtocol.AES128, V3UserConfig.PrivProtocol.parse(""));
+        assertEquals(V3UserConfig.PrivProtocol.AES128, V3UserConfig.PrivProtocol.parse("3DES"));
+    }
 }

@@ -2,7 +2,9 @@ package io.github.chiayi1224.simplesnmp;
 
 import io.github.chiayi1224.simplesnmp.config.TrapOidMapping;
 import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
+import io.github.chiayi1224.simplesnmp.discovery.DiscoveryService;
 import io.github.chiayi1224.simplesnmp.poller.SnmpPoller;
+import io.github.chiayi1224.simplesnmp.snmp.SnmpSession;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import io.github.chiayi1224.simplesnmp.trap.TrapReceiver;
 import io.github.chiayi1224.simplesnmp.web.JettyServer;
@@ -59,17 +61,23 @@ public class SnmpMonitor {
         );
         trapReceiver.start();
 
-        // ── 5. Web Server（設備管理頁面在這）─────────────────────
+        // ── 5. OID 掃描（獨立的 SNMP 連線，不與輪詢共用）──────────
+        SnmpSession discoverySession = new SnmpSession();
+        DiscoveryService discovery = new DiscoveryService(store, discoverySession, DiscoveryService.Limits.DEFAULT);
+
+        // ── 6. Web Server（設備管理頁面在這）─────────────────────
         JettyServer jetty = new JettyServer(
             webPort, httpsEnabled, httpsPort, keystorePath, keystorePass,
-            store, trapReceiver);
+            store, trapReceiver, discovery);
         jetty.start();
 
-        // ── 6. 優雅關閉 ───────────────────────────────────────────
+        // ── 7. 優雅關閉 ───────────────────────────────────────────
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             log.info("關閉中...");
             poller.stop();
             trapReceiver.stop();
+            discovery.close();
+            try { discoverySession.close(); } catch (Exception ignored) {}
             try { jetty.stop();  } catch (Exception ignored) {}
             try { store.close(); } catch (Exception ignored) {}
         }));

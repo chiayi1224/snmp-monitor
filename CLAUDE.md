@@ -54,12 +54,17 @@ JettyServer (8080) ◄───────────────────�
 
 1. `SnmpMonitor`（main）依序初始化 `MetricStore` → `SnmpPoller` → `TrapReceiver` → `JettyServer`，並掛載 shutdown hook。
 2. `SnmpPoller` 每次 poll 前都重新從 DB 讀取設備清單，因此新增/修改設備無需重啟即生效。
+   - 每台設備可設定 SNMP 版本（`1`／`2c`／`3`）與 v3 認證；舊設備預設 `2c`。設備 API 不回傳 v3 密碼，更新時未帶密碼即沿用舊值。
+   - 所有對設備的查詢都透過 `snmp.SnmpSession`（`get()`、`walk()`）：使用自己的 `USM`／`SecurityProtocols`，v3 使用者依設備 engine ID 本地化後加入 USM（同名使用者不同密碼不會互相覆蓋），只發出 GET／GETNEXT／GETBULK。
+   - 測試可用 `src/test/.../snmp/TestSnmpAgent`（記憶體內的 v1/v2c/v3 agent）做端對端驗證，不需要外部設備。
 3. `ThresholdEngine` 使用狀態機（`ThresholdState`）與 hysteresis 防止告警抖動：CPU/記憶體需連續 3 次超標才觸發，磁碟需 2 次；恢復需連續 2 次低於 rearm 值。
 4. `TrapReceiver` 依來源 IP 查找設備名稱（啟動時建立 IP→name 對應表），trap OID 透過 `TrapOidMapping` 轉換為告警類型。
    - 同一個 port 同時接收 v1 / v2c / v3 與 INFORM；v1 依 RFC 3584 轉成 v2 格式，INFORM 會回覆 RESPONSE。
    - v1 / v2c 的 community 依設定 `trap_communities` 過濾（逗號分隔，`*` 代表全部接受）；v3 使用者由 `reloadV3Users()` 即時增刪。
    - 使用自己的 `USM` / `SecurityProtocols` 實例，不依賴 SNMP4J 的全域 singleton（全域實例預設沒有載入任何加密協定）。
    - `TrapReceiverEndToEndTest` 會在本機實際送出各版本 Trap 驗證，修改接收邏輯後請執行。
+
+5. `DiscoveryService`（`discovery` 套件）在單一背景執行緒執行 OID 掃描：系統資訊 → `VendorRegistry` 辨識廠牌 → `MibProbes` 探測常見 MIB →（選擇性）走訪子樹，結果存於 `device_scans`／`device_scan_results`，每台設備保留 3 次。新增探測項目只需在 `MibProbes.ALL` 加一筆。
 
 ### Web 層
 

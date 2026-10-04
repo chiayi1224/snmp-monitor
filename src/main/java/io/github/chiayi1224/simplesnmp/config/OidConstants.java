@@ -24,6 +24,7 @@ public final class OidConstants {
 
     // ─── Disk: hrStorageTable (需要 WALK) ─────────────────────────
     public static final String HR_STORAGE_TABLE   = "1.3.6.1.2.1.25.2.3";
+    public static final String HR_STORAGE_ENTRY   = "1.3.6.1.2.1.25.2.3.1";
     public static final String HR_STORAGE_TYPE    = "1.3.6.1.2.1.25.2.3.1.2";
     public static final String HR_STORAGE_DESCR   = "1.3.6.1.2.1.25.2.3.1.3"; // 掛載點
     public static final String HR_STORAGE_UNIT    = "1.3.6.1.2.1.25.2.3.1.4"; // bytes/unit

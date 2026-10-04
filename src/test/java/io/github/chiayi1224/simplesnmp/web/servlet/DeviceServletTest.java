@@ -11,6 +11,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
+import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
+import org.mockito.ArgumentCaptor;
+
 import java.io.BufferedReader;
 import java.io.PrintWriter;
 import java.io.StringReader;
@@ -101,9 +105,15 @@ class DeviceServletTest {
 
         servlet.doPost(req, resp);
 
-        verify(store).addDevice("Server-01", "192.168.1.10", 161, "public", 2, 3000L);
+        DeviceConfig d = captureAdded();
+        assertEquals("Server-01",     d.getName());
+        assertEquals("192.168.1.10",  d.getHost());
+        assertEquals(161,             d.getPort());
+        assertEquals("public",        d.getCommunity());
+        assertEquals(DeviceConfig.SnmpVersion.V2C, d.getSnmpVersion());
         verify(trapReceiver).reloadDevices(any());
         verify(resp).setStatus(201);
+        verify(store).deleteUnknownSourceByIp("192.168.1.10");
     }
 
     @Test
@@ -115,7 +125,7 @@ class DeviceServletTest {
         servlet.doPost(req, resp);
 
         verify(resp).setStatus(400);
-        verify(store, never()).addDevice(any(), any(), anyInt(), any(), anyInt(), anyLong());
+        verify(store, never()).addDevice(any(DeviceConfig.class));
         verify(trapReceiver, never()).reloadDevices(any());
     }
 
@@ -139,7 +149,11 @@ class DeviceServletTest {
 
         servlet.doPost(req, resp);
 
-        verify(store).addDevice("Dev", "10.0.0.1", 161, "public", 2, 3000L);
+        DeviceConfig d = captureAdded();
+        assertEquals(161,      d.getPort());
+        assertEquals("public", d.getCommunity());
+        assertEquals(2,        d.getRetries());
+        assertEquals(3000L,    d.getTimeoutMs());
     }
 
     // ─── POST /api/devices/{name}（更新） ────────────────────────
@@ -153,7 +167,10 @@ class DeviceServletTest {
 
         servlet.doPost(req, resp);
 
-        verify(store).updateDeviceByName(eq("Router-01"), eq("10.0.0.99"), anyInt(), any(), eq(true), anyInt(), anyLong());
+        ArgumentCaptor<DeviceConfig> captor = ArgumentCaptor.forClass(DeviceConfig.class);
+        verify(store).updateDeviceByName(captor.capture(), eq(true));
+        assertEquals("Router-01", captor.getValue().getName());
+        assertEquals("10.0.0.99", captor.getValue().getHost());
         verify(trapReceiver).reloadDevices(any());
         String body = responseBody.toString();
         assertTrue(body.contains("更新成功"));
@@ -174,5 +191,94 @@ class DeviceServletTest {
         verify(trapReceiver).reloadDevices(any());
         String body = responseBody.toString();
         assertTrue(body.contains("刪除成功"));
+    }
+
+    private DeviceConfig captureAdded() throws Exception {
+        ArgumentCaptor<DeviceConfig> captor = ArgumentCaptor.forClass(DeviceConfig.class);
+        verify(store).addDevice(captor.capture());
+        return captor.getValue();
+    }
+
+    private void post(String path, String json) throws Exception {
+        when(req.getPathInfo()).thenReturn(path);
+        when(req.getReader()).thenReturn(new BufferedReader(new StringReader(json)));
+        servlet.doPost(req, resp);
+    }
+
+    // ─── SNMP 版本與 v3 ──────────────────────────────────────────
+
+    @Test
+    void POST_新增v3設備() throws Exception {
+        when(store.loadEnabledDevices()).thenReturn(List.of());
+
+        post(null, """
+            {"name":"Core","host":"10.0.0.9","snmpVersion":"3","v3User":"monitor",
+             "v3AuthProtocol":"SHA-256","v3AuthPassword":"authPass1",
+             "v3PrivProtocol":"AES-256","v3PrivPassword":"privPass1"}""");
+
+        DeviceConfig d = captureAdded();
+        assertEquals(DeviceConfig.SnmpVersion.V3,       d.getSnmpVersion());
+        assertEquals("monitor",                         d.getV3User());
+        assertEquals(V3UserConfig.AuthProtocol.SHA256,  d.getV3AuthProtocol());
+        assertEquals("authPass1",                       d.getV3AuthPassword());
+        assertEquals(V3UserConfig.PrivProtocol.AES256,  d.getV3PrivProtocol());
+        assertEquals("privPass1",                       d.getV3PrivPassword());
+        verify(resp).setStatus(201);
+    }
+
+    @Test
+    void POST_版本不合法回傳400() throws Exception {
+        post(null, "{\"name\":\"X\",\"host\":\"10.0.0.1\",\"snmpVersion\":\"4\"}");
+
+        verify(resp).setStatus(400);
+        verify(store, never()).addDevice(any(DeviceConfig.class));
+    }
+
+    @Test
+    void POST_v3只有加密沒有認證回傳400() throws Exception {
+        post(null, "{\"name\":\"X\",\"host\":\"h\",\"snmpVersion\":\"3\",\"v3User\":\"u\",\"v3PrivPassword\":\"privPass1\"}");
+
+        verify(resp).setStatus(400);
+        verify(store, never()).addDevice(any(DeviceConfig.class));
+    }
+
+    @Test
+    void POST_v3密碼過短回傳400() throws Exception {
+        post(null, "{\"name\":\"X\",\"host\":\"h\",\"snmpVersion\":\"3\",\"v3User\":\"u\",\"v3AuthPassword\":\"short\"}");
+
+        verify(resp).setStatus(400);
+        verify(store, never()).addDevice(any(DeviceConfig.class));
+    }
+
+    @Test
+    void POST_更新v3設備未帶密碼_沿用舊值且版本不變() throws Exception {
+        DeviceConfig existing = new DeviceConfig.Builder("Core", "10.0.0.9")
+            .snmpVersion(DeviceConfig.SnmpVersion.V3).v3User("monitor")
+            .v3AuthPassword("authPass1").v3PrivPassword("privPass1").build();
+        when(store.loadDevice("Core")).thenReturn(existing);
+        when(store.loadEnabledDevices()).thenReturn(List.of());
+
+        post("/Core", "{\"host\":\"10.0.0.10\"}");
+
+        ArgumentCaptor<DeviceConfig> captor = ArgumentCaptor.forClass(DeviceConfig.class);
+        verify(store).updateDeviceByName(captor.capture(), eq(true));
+        DeviceConfig d = captor.getValue();
+        assertEquals(DeviceConfig.SnmpVersion.V3, d.getSnmpVersion());
+        assertEquals("monitor", d.getV3User());
+        assertNull(d.getV3AuthPassword(), "未帶密碼應傳 null，由資料庫沿用舊值");
+        assertNull(d.getV3PrivPassword());
+    }
+
+    @Test
+    void POST_更新時清除認證但保留加密回傳400() throws Exception {
+        DeviceConfig existing = new DeviceConfig.Builder("Core", "10.0.0.9")
+            .snmpVersion(DeviceConfig.SnmpVersion.V3).v3User("monitor")
+            .v3AuthPassword("authPass1").v3PrivPassword("privPass1").build();
+        when(store.loadDevice("Core")).thenReturn(existing);
+
+        post("/Core", "{\"host\":\"10.0.0.9\",\"v3AuthPassword\":\"\"}");
+
+        verify(resp).setStatus(400);
+        verify(store, never()).updateDeviceByName(any(DeviceConfig.class), anyBoolean());
     }
 }

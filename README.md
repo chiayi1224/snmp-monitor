@@ -4,8 +4,10 @@
 
 ## 功能
 
-- **Polling**：定時取得 CPU 使用率、Memory 使用率、磁碟各掛載點容量
-- **Trap 接收**：同時支援 SNMPv1 / v2c / v3（USM）
+- **Polling**：定時取得 CPU 使用率、Memory 使用率、磁碟各掛載點容量；每台設備可設定 SNMP v1 / v2c / v3
+- **Trap 接收**：同一個 port 同時支援 SNMPv1 / v2c / v3（USM）與 INFORM；v1 依 RFC 3584 轉換
+- **OID 探索**：掃描設備的系統資訊、辨識廠牌、探測常見 MIB 支援，並可完整走訪 OID 子樹
+- **Trap 對應**：網頁管理 Trap OID 對應，未定義 Trap 一鍵轉成告警規則
 - **閾值告警**：連續超過閾值才觸發，連續恢復才解除，不重複寫入（參考 OpenNMS 設計）
 - **Web 管理介面**：設備新增/編輯/停用，修改後下一個 poll 週期立即生效
 - **帳號管理**：Session 認證、BCrypt 密碼、首次登入強制改密碼
@@ -70,12 +72,13 @@ iptables -t nat -A PREROUTING -p udp --dport 162 -j REDIRECT --to-port 1162
 
 ### SNMPv3 Trap 設定
 
-在 `SnmpMonitor.java` 修改：
+以 API 管理 Trap 用的 v3 使用者（`/api/admin/v3-users`），新增或刪除後立即生效。
+認證協定支援 MD5、SHA、SHA-224/256/384/512；加密協定支援 DES、AES-128/192/256。
 
-```java
-List<V3UserConfig> v3Users = List.of(
-    V3UserConfig.authPriv("trapUser", "myAuthPass", "myPrivPass")
-);
+v1 / v2c 的 community 可用設定 `trap_communities` 限制（逗號分隔，預設 `*` 代表全部接受）：
+```bash
+curl -X PUT -H 'Content-Type: application/json' -d '{"value":"public,monitor"}' \
+  http://localhost:8080/api/admin/settings/trap_communities
 ```
 
 設備端 `snmpd.conf`：
@@ -86,13 +89,17 @@ trap2sink 192.168.1.100:1162 trapUser
 
 ### Trap OID 對應
 
-確認設備的 Trap OID 後，修改 `TrapOidMapping.java`：
+在網頁「Trap 對應」分頁管理。收到但沒有對應規則的 Trap 會列在「未定義 Trap」，
+可直接按「建立對應」轉成告警規則；來源 IP 不在設備清單中的會列在「未登錄來源」，可一鍵新增為設備。
 
-```java
-private static final String CPU_TRIGGERED  = "1.3.6.1.4.1.xxxx.cpu.triggered";
-private static final String CPU_RESOLVED   = "1.3.6.1.4.1.xxxx.cpu.resolved";
-// Memory、Disk 同上
-```
+> 首次啟動寫入的三組預設對應（cpu / memory / disk）使用佔位 OID，需改成設備實際的 Trap OID 才會生效。
+
+### OID 探索
+
+在網頁「OID 探索」分頁選擇設備並掃描：會顯示 sysDescr、sysObjectID、廠牌，
+探測 HOST-RESOURCES-MIB、UCD-SNMP-MIB、IF-MIB、Cisco CPU／記憶體池是否支援並列出取樣值。
+勾選「完整走訪」會收集 MIB-2 與廠牌子樹（或自訂子樹）的所有 OID，單次最多 10,000 筆、120 秒，
+每台設備保留最近 3 次結果。掃描只發出讀取請求（GET / GETNEXT / GETBULK）。
 
 ### 閾值設定
 
@@ -146,19 +153,34 @@ src/main/java/io/github/chiayi1224/simplesnmp/
 
 ## API 端點
 
+`/api/admin/*` 需登入（Session），`/api/v1/*` 可用 Session 或 Bearer Token。
+
 | Method | Path | 說明 |
 |--------|------|------|
-| POST | `/api/auth/login` | 登入 |
-| POST | `/api/auth/logout` | 登出 |
+| POST | `/api/auth/login`、`/api/auth/logout` | 登入 / 登出 |
 | GET | `/api/auth/me` | 目前登入帳號 |
-| GET | `/api/status` | 各設備最新狀態 |
-| GET/POST | `/api/devices` | 設備清單 / 新增 |
-| PUT/DELETE | `/api/devices/{id}` | 更新 / 刪除設備 |
-| GET | `/api/alerts` | 告警記錄 |
-| GET/POST | `/api/users` | 帳號清單 / 新增 |
-| PUT | `/api/users/{id}` | 更新帳號 |
-| PUT | `/api/users/{id}/password` | 修改密碼 |
-| DELETE | `/api/users/{id}` | 刪除帳號 |
+| POST | `/api/v1/status` | 各設備最新狀態 |
+| POST | `/api/v1/devices`、`/api/v1/devices/{name}` | 設備清單 / 單台設備（不含 v3 密碼） |
+| POST | `/api/v1/alerts` | 告警記錄 |
+| GET / POST | `/api/admin/devices` | 設備清單 / 新增（含 `snmpVersion` 與 v3 欄位） |
+| GET / POST | `/api/admin/devices/{name}` | 單台設備 / 更新（body 為 `{"action":"delete"}` 時刪除） |
+| GET / POST | `/api/admin/users` | 帳號清單 / 新增 |
+| PUT / DELETE | `/api/admin/users/{id}` | 更新 / 刪除帳號 |
+| PUT | `/api/admin/users/{id}/password` | 修改密碼 |
+| GET / POST | `/api/admin/trap-mappings` | Trap OID 對應清單 / 新增（觸發 OID 重複回 409） |
+| PUT / DELETE | `/api/admin/trap-mappings/{id}` | 更新 / 刪除對應 |
+| GET | `/api/admin/unknown-traps` | 未定義 Trap 與未登錄來源 |
+| DELETE | `/api/admin/unknown-traps/oids/{id}`、`/sources/{id}` | 刪除單筆未定義記錄 |
+| POST | `/api/admin/discovery/scans` | 啟動 OID 掃描（202；設備已有掃描回 409） |
+| GET | `/api/admin/discovery/scans?device=` | 掃描紀錄 |
+| GET | `/api/admin/discovery/scans/{id}` | 掃描結果（系統資訊與 MIB 探測） |
+| GET | `/api/admin/discovery/scans/{id}/oids?prefix=&q=&offset=&limit=` | OID 明細分頁 |
+| GET / POST / PUT / DELETE | `/api/admin/v3-users` | Trap 用 SNMPv3 使用者 |
+| GET / PUT | `/api/admin/settings`、`/api/admin/settings/{key}` | 系統設定 |
+| GET / PUT | `/api/admin/thresholds`、`/api/admin/thresholds/{id}` | 閾值設定 |
+| GET / POST / PUT / DELETE | `/api/admin/poll-oids` | Poll OID |
+| GET / POST | `/api/admin/tokens`、`/api/admin/tokens/{id}` | API Token（更新或 `{"action":"delete"}` 刪除皆用 POST） |
+| GET | `/api/admin/audit-logs` | 稽核日誌 |
 
 ## License
 
