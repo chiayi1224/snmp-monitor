@@ -51,7 +51,7 @@
 `threshold_settings` 新增 `direction TEXT DEFAULT 'HIGH'`；`/api/admin/thresholds` 新增 POST（建立自訂指標閾值）與 DELETE（只能刪除自訂指標，`cpu`／`memory`／`disk` 回 403）。`loadThresholdConfig()` 對沒有設定的自訂指標回傳 null，`ThresholdEngine` 遇到 null 即略過評估。
 
 ### D7. 自訂指標儲存
-`custom_metrics(id, ts, device_name, metric_key, value, unit)`，索引 `(device_name, metric_key, ts)`；最新值查詢以 `MAX(ts)` 子查詢取得。不在本 change 實作資料保存期限（與既有 cpu／mem／disk 表一致，後續統一處理）。
+`custom_metrics(id, ts, device_name, metric_key, value, unit)`，索引 `(device_name, metric_key, ts)` 與 `(ts)`；最新值查詢以 `MAX(ts)` 子查詢取得。納入既有的資料保存期限：`DataRetentionJob` 依 `retention_metrics_days` 與 cpu／mem／disk 一起清除（本提案撰寫後才加入保存期限功能，此處同步）。
 
 ### D8. Poll OID 移除與升級轉換
 `SchemaManager` 升級步驟：若 `poll_oids` 存在且有任何 `enabled=0` 的 cpu／memory／disk 群組 OID，且尚未轉換過（以 `app_settings` 的 `poll_oids_migrated` 標記），則建立「Net-SNMP（UCD-SNMP）（升級轉換）」範本並停用對應指標，指定給 `sys_object_id` 尚未知但目前 `status != 'UNKNOWN'` 的設備（升級前曾成功輪詢、即目前走 Net-SNMP 邏輯的設備）。移除 `PollOidServlet` 註冊與 `test.sh` 第 11 段；`poll_oids` 資料表保留以利回滾。

@@ -4,9 +4,9 @@
 
 ## 1. 計算器（與 SNMP 通訊無關）
 
-- [ ] 1.1 新增 `profile` 套件的 `MetricCalculator` 介面與 `MetricValue`、`SnmpResult`（GET 值與 walk 結果的唯讀包裝）；驗證：`mvn compile` 通過
-- [ ] 1.2 實作 `VALUE`、`HUNDRED_MINUS`、`USED_TOTAL_PERCENT`、`USED_FREE_PERCENT` 計算器與參數驗證（缺 OID、非數字、除以零）；驗證：各自的單元測試涵蓋正常值、noSuchObject、非數字、總量為 0
-- [ ] 1.3 實作 `TABLE_AVERAGE`、`STORAGE_TABLE`（依類型篩選、逐列使用率）、`UCD_MEMORY`；將現有 `PollParserTest` 的全部案例改寫為 `HUNDRED_MINUS`／`UCD_MEMORY` 的測試並保留；驗證：測試通過且案例數不少於原本
+- [x] 1.1 新增 `profile` 套件的 `MetricCalculator` 介面與 `MetricValue`、`SnmpResult`（GET 值與 walk 結果的唯讀包裝）；驗證：`mvn compile` 通過
+- [x] 1.2 實作 `VALUE`、`HUNDRED_MINUS`、`USED_TOTAL_PERCENT`、`USED_FREE_PERCENT` 計算器與參數驗證（缺 OID、非數字、除以零）；驗證：各自的單元測試涵蓋正常值、noSuchObject、非數字、總量為 0
+- [x] 1.3 實作 `TABLE_AVERAGE`、`STORAGE_TABLE`（依類型篩選、逐列使用率）、`UCD_MEMORY`；將現有 `PollParserTest` 的全部案例改寫為 `HUNDRED_MINUS`／`UCD_MEMORY` 的測試並保留；驗證：測試通過且案例數不少於原本
 
 ## 2. 範本資料與內建範本（device-metric-profiles 後端）
 
@@ -19,7 +19,7 @@
 ## 3. 依範本收集（metric-collection 後端）
 
 - [ ] 3.1 `threshold_settings` 補 `direction`；`ThresholdEngine` 新增 `evaluate(device, metricKey, value)`，無閾值時略過；`ThresholdServlet` 新增 POST／DELETE（內建三項 403）；驗證：`ThresholdEngineTest` 新增高／低方向與無閾值案例，`test.sh` 新增自訂閾值段落
-- [ ] 3.2 `SchemaManager` 建立 `custom_metrics`；`MetricRepository` 新增寫入與最新值查詢；`queryLatestStatus()` 增加 `custom`；驗證：`MetricStoreTest` 新增案例，確認既有 `cpu`／`memory`／`disks` 欄位不變
+- [ ] 3.2 `SchemaManager` 建立 `custom_metrics`；`MetricRepository` 新增寫入與最新值查詢，並納入 `retention_metrics_days` 清除；`queryLatestStatus()` 增加 `custom`；驗證：`MetricStoreTest` 新增案例，確認既有 `cpu`／`memory`／`disks` 欄位不變；`DataRetentionJobTest` 確認自訂指標會被清除
 - [ ] 3.3 `SnmpPoller` 改為 D5 流程（合併 GET、表格只 walk 一次、sysObjectID 更新、依指標分派儲存與評估、單一指標失敗不影響其他、警告 log 限流）；驗證：新增 Poller 端對端測試，本機 SNMP4J agent 分別模擬 Net-SNMP、Cisco、未知廠牌設備，確認套用的範本與儲存的數值
 - [ ] 3.4 Net-SNMP 回歸：以本機 agent 提供固定的 UCD 與 hrStorage 數值，比對新流程與改寫前 `PollParser`＋磁碟邏輯的計算結果；驗證：數值完全相同
 - [ ] 3.5 範本預覽 `POST /api/admin/profiles/preview`（不儲存、不告警、逐指標回報結果或錯誤）；驗證：`ProfileServletTest` 與端對端測試涵蓋成功與 OID 不存在
