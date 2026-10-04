@@ -33,6 +33,7 @@ import java.util.Map;
  *   snmp_v3_users       — {@link V3UserRepository}    SNMPv3 Trap 使用者
  *   api_tokens          — {@link ApiTokenRepository}  API Token
  *   audit_logs          — {@link AuditLogRepository}  稽核日誌
+ *   device_scans / device_scan_results — {@link DiscoveryRepository} OID 掃描結果
  */
 public class MetricStore implements AutoCloseable {
 
@@ -51,6 +52,7 @@ public class MetricStore implements AutoCloseable {
     private final V3UserRepository    v3Users;
     private final ApiTokenRepository  apiTokens;
     private final AuditLogRepository  auditLogs;
+    private final DiscoveryRepository discovery;
 
     public MetricStore(String dbPath) throws Exception {
         // 確保父目錄存在（目錄不存在時自動建立，DB 檔由 SQLite JDBC 自動建立）
@@ -77,6 +79,7 @@ public class MetricStore implements AutoCloseable {
         v3Users    = new V3UserRepository(db);
         apiTokens  = new ApiTokenRepository(db);
         auditLogs  = new AuditLogRepository(db);
+        discovery  = new DiscoveryRepository(db);
 
         users.seedDefaults();
         traps.seedDefaults();
@@ -84,6 +87,7 @@ public class MetricStore implements AutoCloseable {
         settings.seedDefaults();
         thresholds.seedDefaults();
         v3Users.seedDefaults();
+        discovery.failInterruptedScans();
         log.info("MetricStore 開啟: {}", dbPath);
     }
 
@@ -402,6 +406,52 @@ public class MetricStore implements AutoCloseable {
     /** 查詢稽核日誌 */
     public List<Map<String, Object>> queryAuditLogs(String eventType, String actor, int limit) {
         return auditLogs.query(eventType, actor, limit);
+    }
+
+    // ─── OID 掃描 ─────────────────────────────────────────────────
+
+    public long createScan(String deviceName, boolean walk) throws SQLException {
+        return discovery.create(deviceName, walk);
+    }
+
+    public void updateScanProgress(long scanId, String progress) throws SQLException {
+        discovery.updateProgress(scanId, progress);
+    }
+
+    public void saveScanSystemInfo(long scanId, String descr, String objectId, String name,
+                                   String uptime, String vendor) throws SQLException {
+        discovery.saveSystemInfo(scanId, descr, objectId, name, uptime, vendor);
+    }
+
+    public void saveScanProbes(long scanId, String probesJson) throws SQLException {
+        discovery.saveProbes(scanId, probesJson);
+    }
+
+    /** 批次寫入掃描到的 OID；每列為 {oid, type, value} */
+    public void addScanResults(long scanId, List<String[]> rows) throws SQLException {
+        discovery.addResults(scanId, rows);
+    }
+
+    public void finishScan(long scanId, String status, String error, boolean truncated) throws SQLException {
+        discovery.finish(scanId, status, error, truncated);
+    }
+
+    /** 每台設備只保留最近 keep 次掃描 */
+    public void pruneScans(String deviceName, int keep) throws SQLException {
+        discovery.prune(deviceName, keep);
+    }
+
+    public List<Map<String, Object>> queryScans(String deviceName) {
+        return discovery.list(deviceName);
+    }
+
+    public Map<String, Object> queryScan(long scanId) {
+        return discovery.get(scanId);
+    }
+
+    /** OID 明細分頁查詢，回傳 {total, items} */
+    public Map<String, Object> queryScanOids(long scanId, String prefix, String keyword, int offset, int limit) {
+        return discovery.queryOids(scanId, prefix, keyword, offset, limit);
     }
 
     @Override

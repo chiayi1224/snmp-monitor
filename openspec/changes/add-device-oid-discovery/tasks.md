@@ -18,12 +18,12 @@
 
 ## 3. 掃描服務（device-discovery 後端）
 
-- [ ] 3.1 `SchemaManager` 建立 `device_scans`、`device_scan_results`；新增 `DiscoveryRepository`（建立、更新進度、寫入結果、分頁查詢、保留最近 3 次）並由 `MetricStore` 委派；驗證：`MetricStoreTest` 新增保留 3 次與前綴／關鍵字篩選測試
-- [ ] 3.2 新增 `VendorRegistry`（企業編號 → 廠牌）；驗證：單元測試涵蓋 Cisco、未知編號、非 enterprises 開頭的 sysObjectID
-- [ ] 3.3 新增 `MibProbe` 定義（HOST-RESOURCES 處理器／儲存、UCD-SNMP CPU／記憶體、IF-MIB、Cisco CPU／記憶體池）與探測執行；驗證：以本機 SNMP4J agent 提供部分 MIB，測試支援／不支援的判定與取樣值
-- [ ] 3.4 新增 `DiscoveryService`（單執行緒排程、同設備 409、系統資訊、探測、子樹 walk、10,000 筆／120 秒上限與截斷標記、失敗保留部分結果）；驗證：端對端測試涵蓋成功、截斷（將上限注入為小值）、設備無回應三種結果
-- [ ] 3.5 新增 `DiscoveryServlet`（D7 的四個端點）並在 `JettyServer` 註冊、`SnmpMonitor` 啟動與關閉 `DiscoveryService`；驗證：`DiscoveryServletTest` 涵蓋 202／404／409 與分頁上限，`test.sh` 新增掃描 API 案例（對不存在的設備 404）
-- [ ] 3.6 掃描只發出 GET／GETNEXT／GETBULK：本機 agent 測試中記錄收到的 PDU 類型；驗證：測試斷言沒有 SET
+- [x] 3.1 `SchemaManager` 建立 `device_scans`、`device_scan_results`；新增 `DiscoveryRepository`（建立、更新進度、寫入結果、分頁查詢、保留最近 3 次）並由 `MetricStore` 委派；驗證：`MetricStoreTest` 新增保留 3 次與前綴／關鍵字篩選測試
+- [x] 3.2 新增 `VendorRegistry`（企業編號 → 廠牌）；驗證：單元測試涵蓋 Cisco、未知編號、非 enterprises 開頭的 sysObjectID
+- [x] 3.3 新增 `MibProbe` 定義（HOST-RESOURCES 處理器／儲存、UCD-SNMP CPU／記憶體、IF-MIB、Cisco CPU／記憶體池）與探測執行；驗證：以本機 SNMP4J agent 提供部分 MIB，測試支援／不支援的判定與取樣值
+- [x] 3.4 新增 `DiscoveryService`（單執行緒排程、同設備 409、系統資訊、探測、子樹 walk、10,000 筆／120 秒上限與截斷標記、失敗保留部分結果）；驗證：端對端測試涵蓋成功、截斷（將上限注入為小值）、設備無回應三種結果
+- [x] 3.5 新增 `DiscoveryServlet`（D7 的四個端點）並在 `JettyServer` 註冊、`SnmpMonitor` 啟動與關閉 `DiscoveryService`；驗證：`DiscoveryServletTest` 涵蓋 202／404／409 與分頁上限，`test.sh` 新增掃描 API 案例（對不存在的設備 404）
+- [x] 3.6 掃描只發出 GET／GETNEXT／GETBULK：本機 agent 測試中記錄收到的 PDU 類型；驗證：測試斷言沒有 SET
 
 ## 4. OID 探索網頁
 

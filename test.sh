@@ -543,6 +543,22 @@ call POST /api/admin/audit-logs -d '{"eventType":"LOGIN_FAIL","limit":10}'
 assert_status "查詢 LOGIN_FAIL" 200
 
 # ═════════════════════════════════════════════════════════════════
+section "16-1. OID 掃描 API"
+# ═════════════════════════════════════════════════════════════════
+
+call POST /api/admin/discovery/scans -d '{"deviceName":"NoSuchDevice"}'
+assert_status "掃描不存在的設備回 404" 404
+
+call POST /api/admin/discovery/scans -d '{"deviceName":"Router-01","walk":true,"subtrees":["1.3.6.1; drop"]}'
+assert_status "子樹格式不正確回 400" 400
+
+call GET /api/admin/discovery/scans
+assert_status "列出掃描" 200
+
+call GET /api/admin/discovery/scans/999999
+assert_status "不存在的掃描回 404" 404
+
+# ═════════════════════════════════════════════════════════════════
 section "17. 登出後保護"
 # ═════════════════════════════════════════════════════════════════
 

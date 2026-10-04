@@ -351,4 +351,94 @@ class MetricStoreTest {
         assertEquals("", store.loadDevice("Core-SW").getV3PrivPassword());
         assertEquals(false, store.queryDeviceByName("Core-SW").get("v3PrivConfigured"));
     }
+
+    // ─── OID 掃描結果 ─────────────────────────────────────────────
+
+    private long completedScan(String device, String... oids) throws SQLException {
+        long id = store.createScan(device, true);
+        List<String[]> rows = new java.util.ArrayList<>();
+        for (String oid : oids) rows.add(new String[]{ oid, "OCTET STRING", "value-of-" + oid });
+        store.addScanResults(id, rows);
+        store.finishScan(id, "COMPLETED", null, false);
+        return id;
+    }
+
+    @Test
+    void 掃描_完成後記錄筆數與狀態() throws SQLException {
+        long id = completedScan("SW", "1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.5.0");
+
+        Map<String, Object> scan = store.queryScan(id);
+        assertEquals("COMPLETED", scan.get("status"));
+        assertEquals(2L, scan.get("oidCount"));
+        assertEquals(false, scan.get("truncated"));
+        assertNotNull(scan.get("finished"));
+    }
+
+    @Test
+    void 掃描_每台設備只保留最近3次() throws SQLException {
+        long first = completedScan("SW", "1.3.6.1.2.1.1.1.0");
+        for (int i = 0; i < 3; i++) completedScan("SW", "1.3.6.1.2.1.1.1.0");
+        completedScan("Other", "1.3.6.1.2.1.1.1.0");
+
+        store.pruneScans("SW", 3);
+
+        assertEquals(3, store.queryScans("SW").size());
+        assertNull(store.queryScan(first), "最舊的掃描應被刪除");
+        assertEquals(0L, store.queryScanOids(first, null, null, 0, 100).get("total"), "結果也應一併刪除");
+        assertEquals(1, store.queryScans("Other").size(), "其他設備不受影響");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 掃描_依前綴篩選且不誤判相似前綴() throws SQLException {
+        long id = completedScan("SW",
+            "1.3.6.1.2.1.2.2.1.2.1", "1.3.6.1.2.1.2.2.1.2.2", "1.3.6.1.2.1.2.20.1", "1.3.6.1.2.1.1.5.0");
+
+        Map<String, Object> r = store.queryScanOids(id, "1.3.6.1.2.1.2.2", null, 0, 100);
+
+        assertEquals(2L, r.get("total"));
+        List<Map<String, Object>> items = (List<Map<String, Object>>) r.get("items");
+        assertEquals("1.3.6.1.2.1.2.2.1.2.1", items.get(0).get("oid"));
+    }
+
+    @Test
+    void 掃描_依值關鍵字篩選並跳脫萬用字元() throws SQLException {
+        long id = store.createScan("SW", true);
+        store.addScanResults(id, List.of(
+            new String[]{ "1.1", "OCTET STRING", "GigabitEthernet0/1" },
+            new String[]{ "1.2", "OCTET STRING", "100%_used" },
+            new String[]{ "1.3", "OCTET STRING", "Loopback0" }));
+
+        assertEquals(1L, store.queryScanOids(id, null, "gigabit", 0, 100).get("total"));
+        assertEquals(1L, store.queryScanOids(id, null, "%_", 0, 100).get("total"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 掃描_分頁() throws SQLException {
+        String[] oids = new String[25];
+        for (int i = 0; i < 25; i++) oids[i] = "1.3.6." + (i + 1);
+        long id = completedScan("SW", oids);
+
+        Map<String, Object> page = store.queryScanOids(id, null, null, 20, 10);
+
+        assertEquals(25L, page.get("total"));
+        List<Map<String, Object>> items = (List<Map<String, Object>>) page.get("items");
+        assertEquals(5, items.size());
+        assertEquals("1.3.6.21", items.get(0).get("oid"), "依寫入順序（走訪順序）排列");
+    }
+
+    @Test
+    void 掃描_重新啟動時未完成的掃描標記為失敗(@TempDir Path dir) throws Exception {
+        String dbPath = dir.resolve("scan.db").toString();
+        long id;
+        try (MetricStore first = new MetricStore(dbPath)) {
+            id = first.createScan("SW", false);
+        }
+        try (MetricStore reopened = new MetricStore(dbPath)) {
+            Map<String, Object> scan = reopened.queryScan(id);
+            assertEquals("FAILED", scan.get("status"));
+            assertTrue(scan.get("error").toString().contains("重啟"));
+        }
+    }
 }
