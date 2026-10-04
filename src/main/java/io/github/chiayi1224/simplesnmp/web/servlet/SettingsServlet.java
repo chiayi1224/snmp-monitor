@@ -35,6 +35,9 @@ public class SettingsServlet extends BaseJsonServlet {
     /** 只接受 true / false 的設定 */
     static final java.util.Set<String> BOOLEAN_KEYS = java.util.Set.of("ping_enabled", "https_enabled");
 
+    /** 系統內部使用的標記，不在 API 顯示也不可修改 */
+    static final java.util.Set<String> INTERNAL_KEYS = java.util.Set.of("poll_oids_migrated");
+
     private final MetricStore store;
 
     public SettingsServlet(MetricStore store) {
@@ -44,7 +47,9 @@ public class SettingsServlet extends BaseJsonServlet {
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         try {
-            writeJson(resp, store.queryAllSettings());
+            Map<String, Object> settings = new java.util.LinkedHashMap<>(store.queryAllSettings());
+            settings.keySet().removeAll(INTERNAL_KEYS);
+            writeJson(resp, settings);
         } catch (Exception e) {
             writeError(resp, 500, e.getMessage());
         }
@@ -59,7 +64,7 @@ public class SettingsServlet extends BaseJsonServlet {
             if (body == null) return;
             String value = body.path("value").asText("").strip();
             if (value.isBlank()) { writeError(resp, 400, "value 不可為空"); return; }
-            if (!store.queryAllSettings().containsKey(key)) { writeError(resp, 404, "找不到設定：" + key); return; }
+            if (INTERNAL_KEYS.contains(key) || !store.queryAllSettings().containsKey(key)) { writeError(resp, 404, "找不到設定：" + key); return; }
             String error = validate(key, value);
             if (error != null) { writeError(resp, 400, error); return; }
             store.upsertSetting(key, value, "");

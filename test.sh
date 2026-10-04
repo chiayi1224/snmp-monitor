@@ -458,52 +458,14 @@ call POST /api/admin/v3-users -d '{"username":"","authPassword":"pass"}'
 assert_status "username 空白回 400" 400
 
 # ═════════════════════════════════════════════════════════════════
-section "11. Poll OID 管理 API"
+section "11. Poll OID 管理 API（已移除，改用監控範本）"
 # ═════════════════════════════════════════════════════════════════
 
 call GET /api/admin/poll-oids
-assert_status "列出 Poll OID" 200
-assert_contains "預設含 cpu 群組" "cpu"
-assert_contains "預設含 memory 群組" "memory"
-assert_contains "預設含 disk 群組" "disk"
-assert_contains "預設含 cpuIdle" "cpuIdle"
+assert_status "GET poll-oids 回 404" 404
 
-POLL_ID=$(jq_field '.[] | select(.name=="cpuIdle") | .id')
-POLL_ID=${POLL_ID:-5}
-log "cpuIdle poll-oid id=$POLL_ID"
-
-# 新增自訂 OID
-call POST /api/admin/poll-oids \
-  -d '{"oid":"1.3.6.1.4.1.9999.1.1","name":"customMetric","description":"自訂指標","groupName":"custom","pollType":"SCALAR"}'
-assert_status "新增自訂 Poll OID" 201
-
-call GET /api/admin/poll-oids
-assert_contains "新增後含 customMetric" "customMetric"
-
-CUSTOM_ID=$(jq_field '.[] | select(.name=="customMetric") | .id')
-CUSTOM_ID=${CUSTOM_ID:-99}
-
-# 停用 OID
-call PUT "/api/admin/poll-oids/${CUSTOM_ID}" \
-  -d '{"oid":"1.3.6.1.4.1.9999.1.1","name":"customMetric","description":"自訂指標（已停用）","groupName":"custom","pollType":"SCALAR","enabled":false}'
-assert_status "停用自訂 Poll OID" 200
-
-call GET /api/admin/poll-oids
-assert_contains "停用後 enabled:false" '"enabled" : false'
-
-# 驗證欄位空值
-call POST /api/admin/poll-oids -d '{"oid":"","name":"test"}'
-assert_status "oid 空白回 400" 400
-
-call POST /api/admin/poll-oids -d '{"oid":"1.3.6.1.4.1.9999.2.1","name":""}'
-assert_status "name 空白回 400" 400
-
-# 刪除自訂 OID
-call DELETE "/api/admin/poll-oids/${CUSTOM_ID}"
-assert_status "刪除自訂 Poll OID" 200
-
-call GET /api/admin/poll-oids
-assert_not_contains "刪除後 customMetric 消失" "customMetric"
+call POST /api/admin/poll-oids -d '{"oid":"1.3.6.1.4.1.9999.1.1","name":"customMetric","groupName":"custom"}'
+assert_status "POST poll-oids 回 404" 404
 
 # ═════════════════════════════════════════════════════════════════
 section "12. 未定義 Trap 查詢 API"

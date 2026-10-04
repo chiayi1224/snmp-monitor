@@ -27,8 +27,8 @@
 
 ## 4. 移除 Poll OID 管理
 
-- [ ] 4.1 實作 D8 升級轉換（以 `poll_oids_migrated` 標記只執行一次）；驗證：`MetricStoreTest` 以含停用 OID 的舊 DB 開啟，確認產生轉換範本並指定給正確設備，第二次開啟不重複轉換
-- [ ] 4.2 移除 `PollOidServlet` 註冊與 `PollOidRepository` 的使用、`test.sh` 第 11 段改為確認 `/api/admin/poll-oids` 回 404；驗證：`./test.sh --skip-build` 通過
+- [x] 4.1 實作 D8 升級轉換（以 `poll_oids_migrated` 標記只執行一次）；驗證：`MetricStoreTest` 以含停用 OID 的舊 DB 開啟，確認產生轉換範本並指定給正確設備，第二次開啟不重複轉換
+- [x] 4.2 移除 `PollOidServlet` 註冊與 `PollOidRepository` 的使用、`test.sh` 第 11 段改為確認 `/api/admin/poll-oids` 回 404；驗證：`./test.sh --skip-build` 通過
 
 ## 5. 網頁
 

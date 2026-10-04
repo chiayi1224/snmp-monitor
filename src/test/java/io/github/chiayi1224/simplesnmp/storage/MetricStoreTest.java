@@ -645,4 +645,91 @@ class MetricStoreTest {
         assertNull(s.get("cpu"));
         assertEquals(1, ((List<?>) s.get("custom")).size());
     }
+
+    // ─── Poll OID 升級轉換（D8）────────────────────────────────────
+
+    /** 建立升級前的 DB：devices 含輪詢狀態，poll_oids 依參數設定啟用狀態 */
+    private static String legacyDb(Path dir, boolean cpuIdleEnabled, boolean diskEnabled) throws Exception {
+        String dbPath = dir.resolve("legacy.db").toString();
+        try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
+             Statement st = c.createStatement()) {
+            st.execute("""
+                CREATE TABLE devices (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, host TEXT NOT NULL,
+                    port INTEGER NOT NULL DEFAULT 161, community TEXT NOT NULL DEFAULT 'public',
+                    enabled INTEGER NOT NULL DEFAULT 1, created TEXT NOT NULL, updated TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'UNKNOWN')
+                """);
+            st.execute("INSERT INTO devices(name, host, created, updated, status) VALUES('Polled', '10.0.0.1', 'x', 'x', 'ONLINE')");
+            st.execute("INSERT INTO devices(name, host, created, updated, status) VALUES('Offline', '10.0.0.2', 'x', 'x', 'OFFLINE')");
+            st.execute("INSERT INTO devices(name, host, created, updated) VALUES('NeverPolled', '10.0.0.3', 'x', 'x')");
+            st.execute("""
+                CREATE TABLE poll_oids (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, oid TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '', group_name TEXT NOT NULL, poll_type TEXT NOT NULL DEFAULT 'SCALAR',
+                    enabled INTEGER NOT NULL DEFAULT 1, created TEXT NOT NULL, updated TEXT NOT NULL)
+                """);
+            String[][] rows = {
+                { "1.3.6.1.4.1.2021.11.9.0",  "cpu",    "1" },   // cpuUser：舊版計算不使用
+                { "1.3.6.1.4.1.2021.11.11.0", "cpu",    cpuIdleEnabled ? "1" : "0" },
+                { "1.3.6.1.4.1.2021.4.5.0",   "memory", "1" },
+                { "1.3.6.1.4.1.2021.4.6.0",   "memory", "1" },
+                { "1.3.6.1.4.1.2021.4.14.0",  "memory", "1" },
+                { "1.3.6.1.4.1.2021.4.15.0",  "memory", "1" },
+                { "1.3.6.1.2.1.25.2.3.1.2",   "disk",   diskEnabled ? "1" : "0" },
+                { "1.3.6.1.2.1.25.2.3.1.3",   "disk",   diskEnabled ? "1" : "0" },
+            };
+            for (String[] r : rows) {
+                st.execute("INSERT INTO poll_oids(oid, name, group_name, enabled, created, updated) VALUES('"
+                    + r[0] + "', '" + r[0] + "', '" + r[1] + "', " + r[2] + ", 'x', 'x')");
+            }
+        }
+        return dbPath;
+    }
+
+    private static MetricProfile migrated(MetricStore s) {
+        return s.loadProfiles().stream()
+            .filter(p -> "Net-SNMP（UCD-SNMP）（升級轉換）".equals(p.name())).findFirst().orElse(null);
+    }
+
+    @Test
+    void 升級轉換_停用的CPU與磁碟轉為範本並指定給曾輪詢的設備_只執行一次(@TempDir Path dir) throws Exception {
+        String dbPath = legacyDb(dir, false, false);
+
+        try (MetricStore upgraded = new MetricStore(dbPath)) {
+            MetricProfile p = migrated(upgraded);
+            assertNotNull(p, "應建立升級轉換範本");
+            assertFalse(p.builtin());
+            Map<String, Boolean> enabled = new java.util.HashMap<>();
+            for (ProfileMetric m : p.metrics()) enabled.put(m.metricKey(), m.enabled());
+            assertEquals(Map.of("cpu", false, "memory", true, "disk", false), enabled);
+
+            assertEquals(p.id(), upgraded.loadDevice("Polled").getProfileId());
+            assertEquals(p.id(), upgraded.loadDevice("Offline").getProfileId());
+            assertNull(upgraded.loadDevice("NeverPolled").getProfileId(), "從未輪詢的設備維持自動");
+
+            // 管理者之後把設備改回自動
+            upgraded.updateDeviceByName(new DeviceConfig.Builder("Polled", "10.0.0.1").profileId(null).build(), true);
+        }
+
+        try (MetricStore again = new MetricStore(dbPath)) {
+            assertEquals(1, again.loadProfiles().stream().filter(p -> p.name().contains("升級轉換")).count(), "不重複轉換");
+            assertNull(again.loadDevice("Polled").getProfileId(), "第二次開啟不再重新指定");
+        }
+    }
+
+    @Test
+    void 升級轉換_只停用未使用的OID或全部啟用時不建立範本(@TempDir Path dir) throws Exception {
+        String dbPath = legacyDb(dir, true, true);
+        try (MetricStore upgraded = new MetricStore(dbPath)) {
+            assertNull(migrated(upgraded));
+            assertNull(upgraded.loadDevice("Polled").getProfileId());
+        }
+    }
+
+    @Test
+    void 升級轉換_全新安裝不建立範本但標記已轉換() {
+        assertNull(migrated(store));
+        assertEquals("true", store.getSetting("poll_oids_migrated", "false"));
+    }
 }

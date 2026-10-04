@@ -100,4 +100,12 @@ class SettingsServletTest {
         assertNull(SettingsServlet.validate("poll_interval_seconds", "10"));
         assertNotNull(SettingsServlet.validate("poll_interval_seconds", "9"));
     }
+
+    @Test
+    void 內部標記不可修改() throws Exception {
+        when(store.queryAllSettings()).thenReturn(Map.of("poll_oids_migrated", Map.of()));
+        put("poll_oids_migrated", "false");
+        verify(resp).setStatus(404);
+        verify(store, never()).upsertSetting(any(), any(), any());
+    }
 }

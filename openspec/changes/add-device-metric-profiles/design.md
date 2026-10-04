@@ -55,7 +55,7 @@
 `custom_metrics(id, ts, device_name, metric_key, value, unit)`，索引 `(device_name, metric_key, ts)` 與 `(ts)`；最新值查詢以 `MAX(ts)` 子查詢取得。納入既有的資料保存期限：`DataRetentionJob` 依 `retention_metrics_days` 與 cpu／mem／disk 一起清除（本提案撰寫後才加入保存期限功能，此處同步）。
 
 ### D8. Poll OID 移除與升級轉換
-`SchemaManager` 升級步驟：若 `poll_oids` 存在且有任何 `enabled=0` 的 cpu／memory／disk 群組 OID，且尚未轉換過（以 `app_settings` 的 `poll_oids_migrated` 標記），則建立「Net-SNMP（UCD-SNMP）（升級轉換）」範本並停用對應指標，指定給 `sys_object_id` 尚未知但目前 `status != 'UNKNOWN'` 的設備（升級前曾成功輪詢、即目前走 Net-SNMP 邏輯的設備）。移除 `PollOidServlet` 註冊與 `test.sh` 第 11 段；`poll_oids` 資料表保留以利回滾。
+升級步驟（`MetricStore` 啟動時，以 `app_settings` 的 `poll_oids_migrated` 標記只執行一次）：依舊版 Poller 的實際行為判斷每個指標是否收集——`cpu` 需 ssCpuIdle 啟用、`memory` 需 UCD 記憶體四個 OID 全部啟用、`disk` 需 disk 群組任一筆啟用（停用或刪除都視為不收集；只停用計算用不到的 OID 例如 cpuUser 不影響）。若有任一項不收集，建立「Net-SNMP（UCD-SNMP）（升級轉換）」範本並停用對應指標，指定給 `sys_object_id` 尚未知、目前 `status != 'UNKNOWN'` 且未手動指定範本的設備（升級前曾輪詢、即目前走 Net-SNMP 邏輯的設備）。`poll_oids` 為空（全新安裝）時不轉換。移除 `PollOidServlet` 註冊與 `test.sh` 第 11 段；`poll_oids` 資料表保留以利回滾。
 
 ### D9. 前端
 - 「監控範本」分頁：範本清單 → 範本編輯對話框（指標列表，依計算類型動態顯示 OID 欄位）→ 預覽（選設備後呼叫 `POST /api/admin/profiles/preview`，body 為範本內容與設備名稱）。

@@ -43,7 +43,7 @@ final class SettingsRepository {
         seedIfAbsent("keystore_path",     "keystore.jks", "KeyStore 路徑（相對 JAR 目錄，修改後需重啟）");
         seedIfAbsent("keystore_password", "changeit",     "KeyStore 密碼（修改後需重啟）");
         seedIfAbsent("trap_communities",  "*",            "允許的 v1/v2c Trap community（逗號分隔，* 代表全部接受）");
-        seedIfAbsent("retention_metrics_days", "90",  "CPU / 記憶體 / 磁碟指標保留天數（0 代表永久保留）");
+        seedIfAbsent("retention_metrics_days", "90",  "CPU / 記憶體 / 磁碟 / 自訂指標保留天數（0 代表永久保留）");
         seedIfAbsent("retention_alerts_days",  "365", "告警記錄保留天數（0 代表永久保留；各指標最後一筆狀態一律保留）");
         seedIfAbsent("retention_audit_days",   "365", "稽核日誌保留天數（0 代表永久保留）");
     }

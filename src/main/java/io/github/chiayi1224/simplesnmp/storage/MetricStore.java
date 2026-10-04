@@ -31,7 +31,7 @@ import java.util.Map;
  *   cpu/mem/disk/custom_metrics — {@link MetricRepository} 輪詢指標歷史
  *   alert_events        — {@link AlertRepository}     閾值狀態變化
  *   trap_oid_mappings / unknown_traps / unknown_sources — {@link TrapRepository}
- *   poll_oids           — {@link PollOidRepository}   Poll OID 設定
+ *   poll_oids           — 已停用（僅保留資料以利回滾；升級時由 {@link PollOidMigration} 轉換為範本）
  *   app_settings        — {@link SettingsRepository}  系統設定（key-value）
  *   threshold_settings  — {@link ThresholdRepository} 告警閾值設定
  *   snmp_v3_users       — {@link V3UserRepository}    SNMPv3 Trap 使用者
@@ -51,7 +51,6 @@ public class MetricStore implements AutoCloseable {
     private final MetricRepository    metrics;
     private final AlertRepository     alerts;
     private final TrapRepository      traps;
-    private final PollOidRepository   pollOids;
     private final SettingsRepository  settings;
     private final ThresholdRepository thresholds;
     private final V3UserRepository    v3Users;
@@ -80,7 +79,6 @@ public class MetricStore implements AutoCloseable {
         metrics    = new MetricRepository(db);
         alerts     = new AlertRepository(db);
         traps      = new TrapRepository(db);
-        pollOids   = new PollOidRepository(db);
         settings   = new SettingsRepository(db);
         thresholds = new ThresholdRepository(db);
         v3Users    = new V3UserRepository(db);
@@ -91,12 +89,12 @@ public class MetricStore implements AutoCloseable {
 
         users.seedDefaults();
         traps.seedDefaults();
-        pollOids.seedDefaults();
         settings.seedDefaults();
         thresholds.seedDefaults();
         v3Users.seedDefaults();
         discovery.failInterruptedScans();
         profiles.syncBuiltin(BuiltinProfiles.all());
+        new PollOidMigration(db, profiles, settings).runOnce();
         log.info("MetricStore 開啟: {}", dbPath);
     }
 
@@ -349,37 +347,6 @@ public class MetricStore implements AutoCloseable {
     /** 查詢所有未登錄來源記錄，依最後出現時間降冪 */
     public List<Map<String, Object>> queryUnknownSources() {
         return traps.queryUnknownSources();
-    }
-
-    // ─── Poll OID ─────────────────────────────────────────────────
-
-    /** 載入所有啟用的 SCALAR OID 字串（供 SnmpPoller GET 使用） */
-    public List<String> loadEnabledScalarOids() {
-        return pollOids.loadEnabledScalarOids();
-    }
-
-    /** 磁碟 WALK 是否啟用（只要 disk group 中有任一筆啟用即視為啟用） */
-    public boolean isDiskPollEnabled() {
-        return pollOids.isDiskPollEnabled();
-    }
-
-    /** 查詢所有 Poll OID（供 Web API 列表） */
-    public List<Map<String, Object>> queryAllPollOids() {
-        return pollOids.queryAll();
-    }
-
-    public void addPollOid(String oid, String name, String description,
-                           String groupName, String pollType) throws SQLException {
-        pollOids.add(oid, name, description, groupName, pollType);
-    }
-
-    public void updatePollOid(long id, String oid, String name, String description,
-                              String groupName, String pollType, boolean enabled) throws SQLException {
-        pollOids.update(id, oid, name, description, groupName, pollType, enabled);
-    }
-
-    public void deletePollOid(long id) throws SQLException {
-        pollOids.delete(id);
     }
 
     // ─── app_settings ─────────────────────────────────────────────

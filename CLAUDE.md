@@ -88,7 +88,9 @@ JettyServer (8080) ◄───────────────────�
 
 - `Db`：JDBC 共用工具（參數綁定、ResultSet 關閉、`RowMapper`）
 - `SchemaManager`：建表 DDL 與既有 DB 欄位遷移
-- `UserRepository`、`DeviceRepository`、`MetricRepository`、`AlertRepository`、`TrapRepository`、`PollOidRepository`、`SettingsRepository`、`ThresholdRepository`、`V3UserRepository`、`ApiTokenRepository`、`AuditLogRepository`、`DiscoveryRepository`、`ProfileRepository`：各自負責對應資料表
+- `UserRepository`、`DeviceRepository`、`MetricRepository`、`AlertRepository`、`TrapRepository`、`SettingsRepository`、`ThresholdRepository`、`V3UserRepository`、`ApiTokenRepository`、`AuditLogRepository`、`DiscoveryRepository`、`ProfileRepository`：各自負責對應資料表
+
+`poll_oids` 資料表已停用（Poll OID 管理改由監控範本取代），只為回滾保留；升級時由 `PollOidMigration` 依舊設定轉換一次。
 
 新增資料表時：DDL 加到 `SchemaManager`，SQL 寫在新的 Repository，再於 `MetricStore` 新增委派方法。
 
