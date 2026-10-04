@@ -1,11 +1,18 @@
 package io.github.chiayi1224.simplesnmp.storage;
 
+import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
+import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
 import io.github.chiayi1224.simplesnmp.threshold.AlertEvent;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
 
@@ -269,5 +276,79 @@ class MetricStoreTest {
         }
         List<Map<String, Object>> alerts = store.queryAlerts(null, 3);
         assertEquals(3, alerts.size());
+    }
+
+    // ─── 設備 SNMP 版本與 v3 設定 ───────────────────────────────
+
+    @Test
+    void 舊版schema的設備升級後為v2c(@TempDir Path dir) throws Exception {
+        String dbPath = dir.resolve("old.db").toString();
+        // 模擬升級前的 devices 資料表（沒有 snmp_version 與 v3 欄位）
+        try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
+             Statement st = c.createStatement()) {
+            st.execute("""
+                CREATE TABLE devices (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, host TEXT NOT NULL,
+                    port INTEGER NOT NULL DEFAULT 161, community TEXT NOT NULL DEFAULT 'public',
+                    enabled INTEGER NOT NULL DEFAULT 1, created TEXT NOT NULL, updated TEXT NOT NULL)
+                """);
+            st.execute("INSERT INTO devices(name, host, created, updated) VALUES('Legacy', '10.0.0.1', 'x', 'x')");
+        }
+
+        try (MetricStore upgraded = new MetricStore(dbPath)) {
+            DeviceConfig d = upgraded.loadDevice("Legacy");
+            assertEquals(DeviceConfig.SnmpVersion.V2C, d.getSnmpVersion());
+            assertEquals("2c", upgraded.queryDeviceByName("Legacy").get("snmpVersion"));
+            assertEquals(1, upgraded.loadEnabledDevices().size());
+        }
+    }
+
+    private static DeviceConfig v3Device(String host, String auth, String priv) {
+        return new DeviceConfig.Builder("Core-SW", host)
+            .snmpVersion(DeviceConfig.SnmpVersion.V3).v3User("monitor")
+            .v3AuthProtocol(V3UserConfig.AuthProtocol.SHA256).v3AuthPassword(auth)
+            .v3PrivProtocol(V3UserConfig.PrivProtocol.AES256).v3PrivPassword(priv)
+            .build();
+    }
+
+    @Test
+    void v3設備_完整設定可載入() throws SQLException {
+        store.addDevice(v3Device("10.0.0.9", "authPass1", "privPass1"));
+
+        DeviceConfig d = store.loadDevice("Core-SW");
+        assertEquals(DeviceConfig.SnmpVersion.V3, d.getSnmpVersion());
+        assertEquals("monitor", d.getV3User());
+        assertEquals(V3UserConfig.AuthProtocol.SHA256, d.getV3AuthProtocol());
+        assertEquals("authPass1", d.getV3AuthPassword());
+        assertEquals(V3UserConfig.PrivProtocol.AES256, d.getV3PrivProtocol());
+        assertEquals("privPass1", d.getV3PrivPassword());
+    }
+
+    @Test
+    void v3設備_查詢結果不含密碼() throws SQLException {
+        store.addDevice(v3Device("10.0.0.9", "authPass1", "privPass1"));
+
+        Map<String, Object> row = store.queryDeviceByName("Core-SW");
+        assertEquals(true, row.get("v3AuthConfigured"));
+        assertEquals(true, row.get("v3PrivConfigured"));
+        assertEquals("SHA256", row.get("v3AuthProtocol"));
+        String all = store.queryAllDevices().toString() + row;
+        assertFalse(all.contains("authPass1"));
+        assertFalse(all.contains("privPass1"));
+    }
+
+    @Test
+    void v3設備_更新時密碼為null沿用舊值_空字串清除() throws SQLException {
+        store.addDevice(v3Device("10.0.0.9", "authPass1", "privPass1"));
+
+        store.updateDeviceByName(v3Device("10.0.0.10", null, null), true);
+        DeviceConfig kept = store.loadDevice("Core-SW");
+        assertEquals("10.0.0.10", kept.getHost());
+        assertEquals("authPass1", kept.getV3AuthPassword());
+        assertEquals("privPass1", kept.getV3PrivPassword());
+
+        store.updateDeviceByName(v3Device("10.0.0.10", null, ""), true);
+        assertEquals("", store.loadDevice("Core-SW").getV3PrivPassword());
+        assertEquals(false, store.queryDeviceByName("Core-SW").get("v3PrivConfigured"));
     }
 }

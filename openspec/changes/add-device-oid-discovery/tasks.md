@@ -7,12 +7,12 @@
 
 ## 2. 設備 SNMP 連線設定（device-snmp-access）
 
-- [ ] 2.1 `SchemaManager.MIGRATIONS` 補 `devices` 的 `snmp_version`、`v3_*` 欄位；驗證：`MetricStoreTest` 以舊版 schema 建立的 DB 開啟後，既有設備版本為 `2c`
-- [ ] 2.2 `DeviceConfig` 擴充版本與 v3 欄位（保留既有建構子預設 v2c），加入驗證規則（版本值、priv 需要 auth、密碼至少 8 字元）；驗證：`DeviceConfigTest` 覆蓋 spec 中每個驗證情境
-- [ ] 2.3 `DeviceRepository` 讀寫新欄位；查詢回傳 `v3AuthConfigured`／`v3PrivConfigured` 而非密碼；更新時密碼缺席沿用舊值；驗證：`MetricStoreTest` 新增「查詢不含密碼」「更新不改密碼」測試
-- [ ] 2.4 `DeviceServlet` 接受新欄位，不合法時回 400；驗證：`DeviceServletTest` 新增版本不合法、priv 無 auth、密碼過短三個 400 案例
-- [ ] 2.5 新增 `snmp.SnmpSession`（自有 `SecurityProtocols`／`USM`、`targetFor()` 依版本建立 target、v3 依 engine ID 本地化使用者並快取、`get()`、`walk()`）；驗證：新增 `SnmpSessionEndToEndTest`，在本機以 SNMP4J 扮演 v1／v2c／v3 agent，GET 與 walk 皆成功，且兩台同 username 不同密碼的 v3 agent 可同時查詢
-- [ ] 2.6 `SnmpPoller` 改用 `SnmpSession`；v3 認證失敗時清除 engine ID 快取並標記 `SNMP_ERROR`；驗證：既有測試與 `./test.sh --skip-build` 全數通過（v2c 無回歸），並新增 Poller 對 v3 本機 agent 的輪詢測試
+- [x] 2.1 `SchemaManager.MIGRATIONS` 補 `devices` 的 `snmp_version`、`v3_*` 欄位；驗證：`MetricStoreTest` 以舊版 schema 建立的 DB 開啟後，既有設備版本為 `2c`
+- [x] 2.2 `DeviceConfig` 擴充版本與 v3 欄位（保留既有建構子預設 v2c），加入驗證規則（版本值、priv 需要 auth、密碼至少 8 字元）；驗證：`DeviceConfigTest` 覆蓋 spec 中每個驗證情境
+- [x] 2.3 `DeviceRepository` 讀寫新欄位；查詢回傳 `v3AuthConfigured`／`v3PrivConfigured` 而非密碼；更新時密碼缺席沿用舊值；驗證：`MetricStoreTest` 新增「查詢不含密碼」「更新不改密碼」測試
+- [x] 2.4 `DeviceServlet` 接受新欄位，不合法時回 400；驗證：`DeviceServletTest` 新增版本不合法、priv 無 auth、密碼過短三個 400 案例
+- [x] 2.5 新增 `snmp.SnmpSession`（自有 `SecurityProtocols`／`USM`、`targetFor()` 依版本建立 target、v3 依 engine ID 本地化使用者並快取、`get()`、`walk()`）；驗證：新增 `SnmpSessionEndToEndTest`，在本機以 SNMP4J 扮演 v1／v2c／v3 agent，GET 與 walk 皆成功，且兩台同 username 不同密碼的 v3 agent 可同時查詢
+- [x] 2.6 `SnmpPoller` 改用 `SnmpSession`；v3 認證失敗時清除 engine ID 快取並標記 `SNMP_ERROR`；驗證：既有測試與 `./test.sh --skip-build` 全數通過（v2c 無回歸），並新增 Poller 對 v3 本機 agent 的輪詢測試
 - [ ] 2.7 設備對話框（`index.html`）依版本切換 community／v3 欄位，密碼欄位留空代表不變更；驗證：以 Playwright 腳本新增一台 v3 設備並重新開啟對話框，確認密碼欄位為空且顯示「已設定」
 - [ ] 2.8 更新 `CLAUDE.md` 架構段落（`SnmpSession` 與 v3 本地化說明）與 `test.sh`（新增 v3 設備 API 案例）；驗證：`./test.sh --skip-build` 通過
 

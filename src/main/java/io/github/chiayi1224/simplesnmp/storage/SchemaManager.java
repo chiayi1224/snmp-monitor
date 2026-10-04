@@ -224,6 +224,12 @@ final class SchemaManager {
         "ALTER TABLE devices ADD COLUMN timeout_ms INTEGER NOT NULL DEFAULT 3000",
         "ALTER TABLE devices ADD COLUMN status TEXT NOT NULL DEFAULT 'UNKNOWN'",
         "ALTER TABLE devices ADD COLUMN last_seen TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE devices ADD COLUMN snmp_version TEXT NOT NULL DEFAULT '2c'",
+        "ALTER TABLE devices ADD COLUMN v3_user TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE devices ADD COLUMN v3_auth_protocol TEXT NOT NULL DEFAULT 'SHA'",
+        "ALTER TABLE devices ADD COLUMN v3_auth_password TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE devices ADD COLUMN v3_priv_protocol TEXT NOT NULL DEFAULT 'AES128'",
+        "ALTER TABLE devices ADD COLUMN v3_priv_password TEXT NOT NULL DEFAULT ''",
     };
 
     private final Db db;

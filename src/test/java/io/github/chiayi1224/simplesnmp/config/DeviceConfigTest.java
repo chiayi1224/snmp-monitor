@@ -48,4 +48,79 @@ class DeviceConfigTest {
         assertTrue(s.contains("10.0.0.1"));
         assertTrue(s.contains("161"));
     }
+
+    // ─── SNMP 版本與 v3 驗證 ─────────────────────────────────────
+
+    private static DeviceConfig.Builder v3(String auth, String priv) {
+        return new DeviceConfig.Builder("V3", "10.0.0.1")
+            .snmpVersion(DeviceConfig.SnmpVersion.V3).v3User("monitor")
+            .v3AuthPassword(auth).v3PrivPassword(priv);
+    }
+
+    @Test
+    void 舊建構子預設為v2c() {
+        assertEquals(DeviceConfig.SnmpVersion.V2C, new DeviceConfig("R1", "10.0.0.1", "public").getSnmpVersion());
+    }
+
+    @Test
+    void 版本解析() {
+        assertEquals(DeviceConfig.SnmpVersion.V1,  DeviceConfig.SnmpVersion.parse("1"));
+        assertEquals(DeviceConfig.SnmpVersion.V2C, DeviceConfig.SnmpVersion.parse("2C"));
+        assertEquals(DeviceConfig.SnmpVersion.V3,  DeviceConfig.SnmpVersion.parse(" 3 "));
+        assertEquals(DeviceConfig.SnmpVersion.V2C, DeviceConfig.SnmpVersion.parse(null));
+        assertNull(DeviceConfig.SnmpVersion.parse("4"));
+    }
+
+    @Test
+    void 驗證_版本不合法() {
+        assertNotNull(new DeviceConfig.Builder("X", "h").snmpVersion(null).build().validate());
+    }
+
+    @Test
+    void 驗證_v1與v2c不檢查v3欄位() {
+        assertNull(new DeviceConfig.Builder("X", "h").snmpVersion(DeviceConfig.SnmpVersion.V1).build().validate());
+    }
+
+    @Test
+    void 驗證_v3合法的authPriv與authNoPriv與noAuth() {
+        assertNull(v3("authPass1", "privPass1").build().validate());
+        assertNull(v3("authPass1", "").build().validate());
+        assertNull(v3("", "").build().validate());
+    }
+
+    @Test
+    void 驗證_v3缺使用者名稱() {
+        assertNotNull(v3("authPass1", "").v3User(" ").build().validate());
+    }
+
+    @Test
+    void 驗證_v3只有加密沒有認證() {
+        assertTrue(v3("", "privPass1").build().validate().contains("認證"));
+    }
+
+    @Test
+    void 驗證_v3密碼少於8字元() {
+        assertNotNull(v3("short", "").build().validate());
+        assertNotNull(v3("authPass1", "short").build().validate());
+    }
+
+    @Test
+    void 驗證_v3密碼為null代表沿用舊值不檢查() {
+        assertNull(v3(null, null).build().validate());
+    }
+
+    @Test
+    void toV3User_依密碼決定安全等級() {
+        V3UserConfig authPriv = v3("authPass1", "privPass1")
+            .v3AuthProtocol(V3UserConfig.AuthProtocol.SHA256)
+            .v3PrivProtocol(V3UserConfig.PrivProtocol.AES256).build().toV3User();
+        assertTrue(authPriv.hasAuth());
+        assertTrue(authPriv.hasPriv());
+        assertEquals(V3UserConfig.AuthProtocol.SHA256, authPriv.getAuthProtocol());
+        assertEquals(V3UserConfig.PrivProtocol.AES256, authPriv.getPrivProtocol());
+
+        V3UserConfig noAuth = v3("", "").build().toV3User();
+        assertFalse(noAuth.hasAuth());
+        assertFalse(noAuth.hasPriv());
+    }
 }

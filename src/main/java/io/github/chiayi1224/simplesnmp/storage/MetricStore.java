@@ -133,6 +133,21 @@ public class MetricStore implements AutoCloseable {
         return devices.queryAll();
     }
 
+    /** 新增設備（含 SNMP 版本與 v3 設定） */
+    public void addDevice(DeviceConfig device) throws SQLException {
+        devices.add(device);
+    }
+
+    /** 依名稱更新設備；v3 密碼為 null 時沿用舊值 */
+    public void updateDeviceByName(DeviceConfig device, boolean enabled) throws SQLException {
+        devices.updateByName(device, enabled);
+    }
+
+    /** 依名稱載入設備完整設定（含 v3 密碼，僅供內部連線使用）；查無資料回傳 null */
+    public DeviceConfig loadDevice(String name) {
+        return devices.loadByName(name);
+    }
+
     public void addDevice(String name, String host, int port, String community) throws SQLException {
         devices.add(name, host, port, community, 2, 3000L);
     }

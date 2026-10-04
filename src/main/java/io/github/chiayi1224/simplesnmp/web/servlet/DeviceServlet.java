@@ -1,5 +1,7 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
+import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
+import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import io.github.chiayi1224.simplesnmp.trap.TrapReceiver;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -27,8 +29,16 @@ import java.util.Map;
  *   "port":      161,
  *   "community": "public",
  *   "retries":   2,
- *   "timeoutMs": 3000
+ *   "timeoutMs": 3000,
+ *   "snmpVersion":    "2c",          ← 選填：1 / 2c / 3，預設 2c
+ *   "v3User":         "monitor",     ← 以下 v3 欄位僅 snmpVersion=3 時使用
+ *   "v3AuthProtocol": "SHA256",      ← MD5 / SHA / SHA224 / SHA256 / SHA384 / SHA512
+ *   "v3AuthPassword": "********",    ← 至少 8 字元；省略代表不設定（更新時代表沿用舊值）
+ *   "v3PrivProtocol": "AES256",      ← DES / AES128 / AES192 / AES256
+ *   "v3PrivPassword": "********"     ← 需先有認證密碼；更新時傳 "" 代表清除
  * }
+ *
+ * 回應不包含 v3 密碼，只有 v3AuthConfigured / v3PrivConfigured。
  *
  * 更新 body（JSON）：
  * {
@@ -87,14 +97,14 @@ public class DeviceServlet extends BaseJsonServlet {
 
             if (name == null) {
                 // 新增設備
-                String dName     = requireText(body, "name",      resp); if (dName == null) return;
-                String host      = requireText(body, "host",      resp); if (host  == null) return;
-                int    port      = optInt (body, "port",      161);
-                String community = optText(body, "community", "public");
-                int    retries   = optInt (body, "retries",   2);
-                long   timeoutMs = optLong(body, "timeoutMs", 3000L);
+                String dName = requireText(body, "name", resp); if (dName == null) return;
+                String host  = requireText(body, "host", resp); if (host  == null) return;
 
-                store.addDevice(dName, host, port, community, retries, timeoutMs);
+                DeviceConfig device = parseDevice(body, dName, host, null);
+                String error = device.validate();
+                if (error != null) { writeError(resp, 400, error); return; }
+
+                store.addDevice(device);
                 trapReceiver.reloadDevices(store.loadEnabledDevices());
                 resp.setStatus(201);
                 writeJson(resp, Map.of("message", "新增成功", "name", dName));
@@ -107,14 +117,16 @@ public class DeviceServlet extends BaseJsonServlet {
                     trapReceiver.reloadDevices(store.loadEnabledDevices());
                     writeJson(resp, Map.of("message", "刪除成功", "name", name));
                 } else {
-                    String  host      = requireText(body, "host", resp); if (host == null) return;
-                    int     port      = optInt (body, "port",      161);
-                    String  community = optText(body, "community", "public");
-                    boolean enabled   = optBool(body, "enabled",   true);
-                    int     retries   = optInt (body, "retries",   2);
-                    long    timeoutMs = optLong(body, "timeoutMs", 3000L);
+                    String host = requireText(body, "host", resp); if (host == null) return;
 
-                    store.updateDeviceByName(name, host, port, community, enabled, retries, timeoutMs);
+                    DeviceConfig existing = store.loadDevice(name);
+                    DeviceConfig device   = parseDevice(body, name, host, existing);
+                    // 以「合併舊密碼後」的結果驗證，確保 auth / priv 搭配與長度正確
+                    String error = mergePasswords(device, existing).validate();
+                    if (error != null) { writeError(resp, 400, error); return; }
+
+                    boolean enabled = optBool(body, "enabled", true);
+                    store.updateDeviceByName(device, enabled);
                     trapReceiver.reloadDevices(store.loadEnabledDevices());
                     writeJson(resp, Map.of("message", "更新成功", "name", name));
                 }
@@ -122,5 +134,59 @@ public class DeviceServlet extends BaseJsonServlet {
         } catch (Exception e) {
             writeError(resp, 500, e.getMessage());
         }
+    }
+
+    /**
+     * 由 request body 組出設備設定。
+     * 新增時（existing == null）未提供的欄位用預設值；更新時 SNMP 版本與 v3 非密碼欄位未提供則沿用舊值。
+     * v3 密碼：欄位不存在 → null（新增時視為未設定、更新時沿用舊值）；存在 → 原值（"" 代表清除）。
+     */
+    private DeviceConfig parseDevice(JsonNode body, String name, String host, DeviceConfig existing) {
+        DeviceConfig.Builder b = new DeviceConfig.Builder(name, host)
+            .port     (optInt (body, "port",      161))
+            .community(optText(body, "community", "public"))
+            .retries  (optInt (body, "retries",   2))
+            .timeoutMs(optLong(body, "timeoutMs", 3000L));
+
+        String version = rawText(body, "snmpVersion");
+        b.snmpVersion(version != null || existing == null
+            ? DeviceConfig.SnmpVersion.parse(version)
+            : existing.getSnmpVersion());
+
+        String user = rawText(body, "v3User");
+        b.v3User(user != null ? user.trim() : existing != null ? existing.getV3User() : "");
+
+        String authProto = rawText(body, "v3AuthProtocol");
+        b.v3AuthProtocol(authProto != null || existing == null
+            ? V3UserConfig.AuthProtocol.parse(authProto) : existing.getV3AuthProtocol());
+
+        String privProto = rawText(body, "v3PrivProtocol");
+        b.v3PrivProtocol(privProto != null || existing == null
+            ? V3UserConfig.PrivProtocol.parse(privProto) : existing.getV3PrivProtocol());
+
+        String authPass = rawText(body, "v3AuthPassword");
+        String privPass = rawText(body, "v3PrivPassword");
+        b.v3AuthPassword(authPass != null || existing != null ? authPass : "");
+        b.v3PrivPassword(privPass != null || existing != null ? privPass : "");
+        return b.build();
+    }
+
+    /** 密碼為 null（沿用舊值）時填入舊密碼，供驗證使用 */
+    private static DeviceConfig mergePasswords(DeviceConfig d, DeviceConfig existing) {
+        String auth = d.getV3AuthPassword() != null ? d.getV3AuthPassword()
+            : existing != null ? existing.getV3AuthPassword() : "";
+        String priv = d.getV3PrivPassword() != null ? d.getV3PrivPassword()
+            : existing != null ? existing.getV3PrivPassword() : "";
+        return new DeviceConfig.Builder(d.getName(), d.getHost())
+            .snmpVersion(d.getSnmpVersion()).v3User(d.getV3User())
+            .v3AuthProtocol(d.getV3AuthProtocol()).v3AuthPassword(auth)
+            .v3PrivProtocol(d.getV3PrivProtocol()).v3PrivPassword(priv)
+            .build();
+    }
+
+    /** 欄位不存在或為 JSON null 時回傳 null，否則回傳文字（不 trim，保留密碼原樣） */
+    private static String rawText(JsonNode body, String field) {
+        JsonNode node = body.path(field);
+        return node.isMissingNode() || node.isNull() ? null : node.asText();
     }
 }
