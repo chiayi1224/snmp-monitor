@@ -42,6 +42,7 @@ final class SettingsRepository {
         seedIfAbsent("https_port",        "8443",         "HTTPS Port（修改後需重啟）");
         seedIfAbsent("keystore_path",     "keystore.jks", "KeyStore 路徑（相對 JAR 目錄，修改後需重啟）");
         seedIfAbsent("keystore_password", "changeit",     "KeyStore 密碼（修改後需重啟）");
+        seedIfAbsent("trap_communities",  "*",            "允許的 v1/v2c Trap community（逗號分隔，* 代表全部接受）");
     }
 
     /** 確保特定 setting key 存在（若已存在則不覆蓋），用於版本升級時新增設定 */

@@ -10,27 +10,44 @@ import org.slf4j.LoggerFactory;
 import org.snmp4j.CommandResponder;
 import org.snmp4j.CommandResponderEvent;
 import org.snmp4j.MessageDispatcherImpl;
+import org.snmp4j.MessageException;
+import org.snmp4j.PDU;
+import org.snmp4j.PDUv1;
 import org.snmp4j.Snmp;
+import org.snmp4j.mp.CounterSupport;
 import org.snmp4j.mp.MPv1;
 import org.snmp4j.mp.MPv2c;
 import org.snmp4j.mp.MPv3;
-import org.snmp4j.security.*;
+import org.snmp4j.mp.MessageProcessingModel;
+import org.snmp4j.mp.StatusInformation;
 import org.snmp4j.security.SecurityModel;
-import org.snmp4j.smi.Integer32;
+import org.snmp4j.security.SecurityModels;
+import org.snmp4j.security.SecurityProtocols;
+import org.snmp4j.security.USM;
+import org.snmp4j.security.UsmUser;
 import org.snmp4j.smi.OctetString;
+import org.snmp4j.smi.TimeTicks;
 import org.snmp4j.smi.UdpAddress;
 import org.snmp4j.smi.VariableBinding;
 import org.snmp4j.transport.DefaultUdpTransportMapping;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * SNMP Trap Receiver（同時支援 v1 / v2c / v3）
+ * SNMP Trap Receiver（同一個 port 同時支援 v1 / v2c / v3，含 INFORM）
+ *
+ * 版本處理：
+ *   - v1：依 RFC 3584 §3.1 轉為 v2 格式（補上 snmpTrapOID.0 等欄位）後走相同流程
+ *   - v1 / v2c：community 須在設定 trap_communities 的允許清單內（"*" 代表全部接受）
+ *   - v3：以 USM 使用者驗證，使用者可透過 reloadV3Users() 動態增刪
+ *   - INFORM（v2c / v3）：通過驗證後立即回覆 RESPONSE，避免設備重送
  *
  * 辨識來源設備：
  *   1. 用 peer IP 查 ipToDevice 表（從 DeviceConfig 建立）
@@ -45,9 +62,23 @@ public class TrapReceiver implements CommandResponder {
 
     private static final String SNMP_TRAP_OID_KEY = "1.3.6.1.6.3.1.1.4.1.0";
 
-    private final int                listenPort;
-    private final List<V3UserConfig> v3Users;
-    private final MetricStore        store;
+    // RFC 3584 §3.1 v1 → v2 轉換用的 OID
+    static final String SYS_UPTIME_KEY           = "1.3.6.1.2.1.1.3.0";
+    static final String SNMP_TRAPS_PREFIX        = "1.3.6.1.6.3.1.1.5.";   // 標準 generic trap（coldStart 等）
+    static final String SNMP_TRAP_ADDRESS_KEY    = "1.3.6.1.6.3.18.1.3.0";
+    static final String SNMP_TRAP_ENTERPRISE_KEY = "1.3.6.1.6.3.1.1.4.3.0";
+
+    /** 允許的 v1 / v2c community 設定鍵；值為逗號分隔清單，"*" 代表全部接受 */
+    static final String TRAP_COMMUNITIES_SETTING = "trap_communities";
+
+    private final int         listenPort;
+    private final MetricStore store;
+
+    // 接收端專用的 SNMPv3 安全設定（不使用 SNMP4J 的全域 singleton）
+    private final SecurityProtocols securityProtocols =
+        new SecurityProtocols(SecurityProtocols.SecurityProtocolSet.maxCompatibility);
+    private final USM usm =
+        new USM(securityProtocols, new OctetString(MPv3.createLocalEngineID()), 0);
 
     /*
      * 查表皆為不可變快照，reload 時整份替換（volatile 寫入），
@@ -65,10 +96,10 @@ public class TrapReceiver implements CommandResponder {
                         List<Mapping>        mappings,
                         List<DeviceConfig>   devices) {
         this.listenPort = listenPort;
-        this.v3Users    = v3Users;
         this.store      = store;
         applyDevices(devices);
         applyMappings(mappings);
+        applyV3Users(v3Users);
     }
 
     // ─── 啟動 ─────────────────────────────────────────────────────
@@ -77,12 +108,10 @@ public class TrapReceiver implements CommandResponder {
         MessageDispatcherImpl dispatcher = new MessageDispatcherImpl();
         dispatcher.addMessageProcessingModel(new MPv1());
         dispatcher.addMessageProcessingModel(new MPv2c());
-
-        if (!v3Users.isEmpty()) {
-            SecurityModels.getInstance().addSecurityModel(buildUsm());
-            dispatcher.addMessageProcessingModel(new MPv3());
-            log.info("SNMPv3 USM 已啟用，已登錄 {} 個 user", v3Users.size());
-        }
+        // v3 一律啟用：啟動時沒有使用者，之後從 Web 新增也能立即接收
+        dispatcher.addMessageProcessingModel(new MPv3(usm.getLocalEngineID().getValue(), null,
+            securityProtocols, SecurityModels.getCollection(new SecurityModel[]{ usm }),
+            CounterSupport.getInstance()));
 
         UdpAddress listenAddress = new UdpAddress(InetAddress.getByName("0.0.0.0"), listenPort);
         DefaultUdpTransportMapping transport = new DefaultUdpTransportMapping(listenAddress);
@@ -110,19 +139,10 @@ public class TrapReceiver implements CommandResponder {
     }
 
     /**
-     * 重新載入 SNMPv3 使用者（USM）
-     * 注意：需要重建 USM 並重新建立 SNMP 監聽器才能完全生效。
-     * 此方法更新記憶體中的使用者清單；完全生效需重啟。
-     * 對於 Web 管理顯示用途已足夠。
+     * 重新載入 SNMPv3 使用者（USM），立即生效：新增的使用者可馬上送 Trap，已刪除 / 停用的使用者立即失效
      */
     public void reloadV3Users(List<V3UserConfig> newUsers) {
-        SecurityModel secModel = SecurityModels.getInstance()
-            .getSecurityModel(new Integer32(SecurityModel.SECURITY_MODEL_USM));
-        if (secModel instanceof USM usm) {
-            for (V3UserConfig user : newUsers) {
-                usm.addUser(buildUsmUser(user));
-            }
-        }
+        applyV3Users(newUsers);
         log.info("SNMPv3 USM 使用者已重新載入，共 {} 個", newUsers.size());
     }
 
@@ -155,20 +175,93 @@ public class TrapReceiver implements CommandResponder {
 
     @Override
     public <A extends org.snmp4j.smi.Address> void processPdu(CommandResponderEvent<A> event) {
-        if (event.getPDU() == null) return;
+        PDU pdu = event.getPDU();
+        if (pdu == null || !isNotification(pdu.getType())) return;
 
         String peerIp = extractIp(event.getPeerAddress() != null
             ? event.getPeerAddress().toString() : "unknown");
-        log.debug("收到 Trap from={} version={}", peerIp, snmpVersion(event.getMessageProcessingModel()));
+        int model = event.getMessageProcessingModel();
+        log.debug("收到 {} from={} version={}", PDU.getTypeString(pdu.getType()), peerIp, snmpVersion(model));
 
-        // 依 PDU 順序收集 VarBind
-        Map<String, String> bindings = new LinkedHashMap<>();
-        for (VariableBinding vb : event.getPDU().getVariableBindings()) {
-            bindings.put(vb.getOid().toString(), vb.getVariable().toString());
+        // v1 / v2c：檢查 community（v3 已由 USM 驗證）
+        if (model != MessageProcessingModel.MPv3) {
+            String community = new String(event.getSecurityName(), StandardCharsets.UTF_8);
+            if (!isCommunityAccepted(community)) {
+                log.warn("拒絕 Trap from={}：community 不在允許清單內", peerIp);
+                event.setProcessed(true);
+                return;
+            }
         }
+
+        if (pdu.getType() == PDU.INFORM) sendInformResponse(event);
+
+        Map<String, String> bindings = pdu instanceof PDUv1 v1
+            ? v1ToV2Bindings(v1)
+            : collectBindings(pdu);
 
         handleTrap(peerIp, bindings);
         event.setProcessed(true);
+    }
+
+    private static boolean isNotification(int pduType) {
+        return pduType == PDU.TRAP || pduType == PDU.V1TRAP || pduType == PDU.INFORM;
+    }
+
+    /** community 是否在 trap_communities 允許清單內；未設定或為 "*" 時全部接受 */
+    boolean isCommunityAccepted(String community) {
+        String allowed = store.getSetting(TRAP_COMMUNITIES_SETTING, "*");
+        if (allowed == null || allowed.isBlank() || allowed.trim().equals("*")) return true;
+        return Arrays.stream(allowed.split(","))
+            .map(String::trim)
+            .anyMatch(c -> c.equals(community));
+    }
+
+    /** 回覆 INFORM 的 RESPONSE（與 SNMP4J NotificationDispatcher 的作法相同） */
+    private void sendInformResponse(CommandResponderEvent<?> event) {
+        PDU response = (PDU) event.getPDU().clone();
+        response.setType(PDU.RESPONSE);
+        response.setErrorStatus(PDU.noError);
+        response.setErrorIndex(0);
+        try {
+            event.getMessageDispatcher().returnResponsePdu(
+                event.getMessageProcessingModel(), event.getSecurityModel(),
+                event.getSecurityName(), event.getSecurityLevel(),
+                response, event.getMaxSizeResponsePDU(),
+                event.getStateReference(), new StatusInformation());
+        } catch (MessageException e) {
+            log.warn("INFORM 回覆失敗: {}", e.getMessage());
+        }
+    }
+
+    /** 依 PDU 順序收集 VarBind */
+    private static Map<String, String> collectBindings(PDU pdu) {
+        Map<String, String> bindings = new LinkedHashMap<>();
+        for (VariableBinding vb : pdu.getVariableBindings()) {
+            bindings.put(vb.getOid().toString(), vb.getVariable().toString());
+        }
+        return bindings;
+    }
+
+    /**
+     * v1 Trap 依 RFC 3584 §3.1 轉為 v2 VarBind：
+     *   sysUpTime.0、snmpTrapOID.0、原始 VarBind、snmpTrapAddress.0、snmpTrapEnterprise.0
+     * snmpTrapOID：generic 0~5 → snmpTraps.(generic+1)；6（enterpriseSpecific）→ enterprise.0.specific
+     */
+    static Map<String, String> v1ToV2Bindings(PDUv1 pdu) {
+        String enterprise = pdu.getEnterprise().toString();
+        String trapOid = pdu.getGenericTrap() == PDUv1.ENTERPRISE_SPECIFIC
+            ? enterprise + ".0." + pdu.getSpecificTrap()
+            : SNMP_TRAPS_PREFIX + (pdu.getGenericTrap() + 1);
+
+        Map<String, String> bindings = new LinkedHashMap<>();
+        bindings.put(SYS_UPTIME_KEY, new TimeTicks(pdu.getTimestamp()).toString());
+        bindings.put(SNMP_TRAP_OID_KEY, trapOid);
+        bindings.putAll(collectBindings(pdu));
+        if (pdu.getAgentAddress() != null) {
+            bindings.put(SNMP_TRAP_ADDRESS_KEY, pdu.getAgentAddress().toString());
+        }
+        bindings.put(SNMP_TRAP_ENTERPRISE_KEY, enterprise);
+        return bindings;
     }
 
     /**
@@ -183,10 +276,10 @@ public class TrapReceiver implements CommandResponder {
         boolean knownSource = knownName != null;
         String  deviceName  = knownSource ? knownName : peerIp;
 
-        // ② 取出 trap OID（v1 沒有這個欄位）
+        // ② 取出 trap OID（v1 已在 processPdu 轉換補上；仍缺少代表封包格式不正確）
         String trapOid = bindings.get(SNMP_TRAP_OID_KEY);
         if (trapOid == null) {
-            log.info("收到 v1 trap from={} ({})，無 snmpTrapOID，略過", deviceName, peerIp);
+            log.warn("收到 Trap from={} ({})，缺少 snmpTrapOID.0，略過", deviceName, peerIp);
             return;
         }
 
@@ -254,17 +347,16 @@ public class TrapReceiver implements CommandResponder {
 
     // ─── USM（v3）────────────────────────────────────────────────
 
-    private USM buildUsm() {
-        byte[] localEngineId = MPv3.createLocalEngineID();
-        USM usm = new USM(SecurityProtocols.getInstance(), new OctetString(localEngineId), 0);
-        for (V3UserConfig user : v3Users) {
+    /** 以新清單整份替換 USM 使用者（未本地化的使用者可接受任何來源 engine ID 的 Trap） */
+    private void applyV3Users(List<V3UserConfig> users) {
+        usm.removeAllUsers();
+        for (V3UserConfig user : users) {
             usm.addUser(buildUsmUser(user));
             log.info("USM 登錄 user={} auth={} priv={}",
                 user.getUsername(),
                 user.hasAuth() ? "yes" : "no",
                 user.hasPriv() ? "yes" : "no");
         }
-        return usm;
     }
 
     private UsmUser buildUsmUser(V3UserConfig cfg) {
