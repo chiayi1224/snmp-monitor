@@ -185,4 +185,32 @@ class ProfileServletTest {
         assertTrue(json.contains("\"deviceCount\" : 2"), json);
         assertTrue(json.contains("\"kind\" : \"HUNDRED_MINUS\""), json);
     }
+
+    // ─── 預覽（參數檢查；實際查詢見 ProfilePreviewEndToEndTest）──────
+
+    @Test
+    void 預覽_未指定設備400_設備不存在404() throws Exception {
+        request("/preview", "{\"profileId\":1}");
+        servlet.doPost(req, resp);
+        verify(resp).setStatus(400);
+
+        request("/preview", "{\"deviceName\":\"nope\",\"profileId\":1}");
+        servlet.doPost(req, resp);
+        verify(resp).setStatus(404);
+    }
+
+    @Test
+    void 預覽_範本內容不合法400_未啟用503() throws Exception {
+        when(store.loadDevice("SW-01")).thenReturn(new io.github.chiayi1224.simplesnmp.config.DeviceConfig("SW-01", "127.0.0.1", "public"));
+        request("/preview", """
+            {"deviceName":"SW-01","profile":{"metrics":[{"metricKey":"temp","kind":"VALUE","params":{}}]}}""");
+        servlet.doPost(req, resp);
+        verify(resp).setStatus(400);
+        assertTrue(body.toString().contains("缺少參數 oid"));
+
+        request("/preview", "{\"deviceName\":\"SW-01\",\"profileId\":1}");
+        servlet.doPost(req, resp);
+        verify(resp).setStatus(503);
+        verify(store, never()).saveCustomMetric(any(), any(), anyDouble(), any());
+    }
 }

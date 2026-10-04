@@ -22,8 +22,8 @@
 - [x] 3.2 `SchemaManager` 建立 `custom_metrics`；`MetricRepository` 新增寫入與最新值查詢，並納入 `retention_metrics_days` 清除；`queryLatestStatus()` 增加 `custom`；驗證：`MetricStoreTest` 新增案例，確認既有 `cpu`／`memory`／`disks` 欄位不變；`DataRetentionJobTest` 確認自訂指標會被清除
 - [x] 3.3 `SnmpPoller` 改為 D5 流程（合併 GET、表格只 walk 一次、sysObjectID 更新、依指標分派儲存與評估、單一指標失敗不影響其他、警告 log 限流）；驗證：新增 Poller 端對端測試，本機 SNMP4J agent 分別模擬 Net-SNMP、Cisco、未知廠牌設備，確認套用的範本與儲存的數值
 - [x] 3.4 Net-SNMP 回歸：以本機 agent 提供固定的 UCD 與 hrStorage 數值，比對新流程與改寫前 `PollParser`＋磁碟邏輯的計算結果；驗證：數值完全相同
-- [ ] 3.5 範本預覽 `POST /api/admin/profiles/preview`（不儲存、不告警、逐指標回報結果或錯誤）；驗證：`ProfileServletTest` 與端對端測試涵蓋成功與 OID 不存在
-- [ ] 3.6 更新 `CLAUDE.md` 資料流與設定常數段落（範本、計算類型、內建範本位置）；驗證：文件與程式一致（人工檢查）
+- [x] 3.5 範本預覽 `POST /api/admin/profiles/preview`（不儲存、不告警、逐指標回報結果或錯誤）；驗證：`ProfileServletTest` 與端對端測試涵蓋成功與 OID 不存在
+- [x] 3.6 更新 `CLAUDE.md` 資料流與設定常數段落（範本、計算類型、內建範本位置）；驗證：文件與程式一致（人工檢查）
 
 ## 4. 移除 Poll OID 管理
 

@@ -1,9 +1,13 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.profile.MetricKind;
 import io.github.chiayi1224.simplesnmp.profile.MetricProfile;
+import io.github.chiayi1224.simplesnmp.profile.MetricValue;
+import io.github.chiayi1224.simplesnmp.profile.ProfileCollector;
 import io.github.chiayi1224.simplesnmp.profile.ProfileMetric;
+import io.github.chiayi1224.simplesnmp.snmp.SnmpException;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -25,6 +29,7 @@ import java.util.function.Function;
  *   PUT    /api/admin/profiles/{id}        — 整份更新（內建範本 403）
  *   DELETE /api/admin/profiles/{id}        — 刪除（內建範本 403；手動指定此範本的設備改回自動）
  *   POST   /api/admin/profiles/{id}/copy   — 複製（201，名稱加上「（複本）」）
+ *   POST   /api/admin/profiles/preview     — 對設備試算一次（不儲存、不告警）
  *
  * 範本 body：
  * {
@@ -33,13 +38,23 @@ import java.util.function.Function;
  *     { "metricKey": "cpu", "kind": "VALUE", "params": { "oid": "1.3.6.1..." }, "unit": "%", "enabled": true }
  *   ]
  * }
+ *
+ * 預覽 body：{ "deviceName": "SW-01", "profileId": 3 } 或 { "deviceName": "SW-01", "profile": { 範本內容（可未儲存）} }
+ * 預覽包含停用的指標，回應逐指標列出數值或失敗原因。
  */
 public class ProfileServlet extends BaseJsonServlet {
 
-    protected final MetricStore store;
+    protected final MetricStore      store;
+    private   final ProfileCollector collector;
 
     public ProfileServlet(MetricStore store) {
-        this.store = store;
+        this(store, null);
+    }
+
+    /** @param collector 預覽用；null 時預覽回 503 */
+    public ProfileServlet(MetricStore store, ProfileCollector collector) {
+        this.store     = store;
+        this.collector = collector;
     }
 
     // ─── GET ──────────────────────────────────────────────────────
@@ -70,17 +85,84 @@ public class ProfileServlet extends BaseJsonServlet {
         try {
             String path = pathName(req);
             if (path == null) { create(req, resp); return; }
+            if ("preview".equals(path)) { preview(req, resp); return; }
             String[] parts = path.split("/");
             if (parts.length == 2 && "copy".equals(parts[1])) { copy(parseId(parts[0]), resp); return; }
-            if (!handleExtraPost(path, req, resp)) writeError(resp, 404, "找不到路徑");
+            writeError(resp, 404, "找不到路徑");
         } catch (Exception e) {
             writeError(resp, 500, e.getMessage());
         }
     }
 
-    /** 供子功能（預覽）擴充的 POST 路徑；回傳是否已處理 */
-    protected boolean handleExtraPost(String path, HttpServletRequest req, HttpServletResponse resp) throws Exception {
-        return false;
+    // ─── 預覽 ─────────────────────────────────────────────────────
+
+    private void preview(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        JsonNode body = parseBody(req, resp);
+        if (body == null) return;
+        String deviceName = body.path("deviceName").asText("").trim();
+        if (deviceName.isEmpty()) { writeError(resp, 400, "請指定 deviceName"); return; }
+        DeviceConfig device = store.loadDevice(deviceName);
+        if (device == null) { writeError(resp, 404, "找不到設備：" + deviceName); return; }
+
+        MetricProfile profile;
+        if (body.hasNonNull("profileId")) {
+            profile = store.loadProfile(body.path("profileId").asLong());
+            if (profile == null) { writeError(resp, 404, "找不到範本 #" + body.path("profileId").asText()); return; }
+        } else if (body.path("profile").isObject()) {
+            profile = parseProfile(body.path("profile"), null);
+            if (profile.name().isEmpty()) profile = new MetricProfile(null, "（預覽）", "", profile.matchPrefix(), false, profile.metrics());
+            String error = profile.validate();
+            if (error != null) { writeError(resp, 400, error); return; }
+        } else {
+            writeError(resp, 400, "請指定 profileId 或 profile");
+            return;
+        }
+        if (collector == null) { writeError(resp, 503, "預覽功能未啟用"); return; }
+
+        // 停用的指標也試算，方便啟用前確認
+        List<ProfileMetric> all = new ArrayList<>();
+        for (ProfileMetric m : profile.metrics()) all.add(new ProfileMetric(m.metricKey(), m.kind(), m.params(), m.unit(), true));
+        MetricProfile trial = new MetricProfile(profile.id(), profile.name(), profile.description(), profile.matchPrefix(),
+            profile.builtin(), all);
+
+        List<ProfileCollector.MetricResult> results;
+        try {
+            results = ProfileCollector.calculate(trial, collector.fetch(device, trial));
+        } catch (SnmpException e) {
+            writeError(resp, 502, "設備無法查詢：" + e.getMessage());
+            return;
+        }
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (int i = 0; i < results.size(); i++) {
+            ProfileCollector.MetricResult r = results.get(i);
+            Map<String, Object> x = new LinkedHashMap<>();
+            x.put("metricKey", r.metric().metricKey());
+            x.put("kind",      r.metric().kind().name());
+            x.put("unit",      r.metric().unit());
+            x.put("enabled",   profile.metrics().get(i).enabled());
+            x.put("ok",        r.ok());
+            if (r.ok()) {
+                List<Map<String, Object>> values = new ArrayList<>();
+                for (MetricValue v : r.values()) {
+                    Map<String, Object> mv = new LinkedHashMap<>();
+                    mv.put("instance",   v.instance());
+                    mv.put("value",      v.value());
+                    mv.put("totalBytes", v.totalBytes());
+                    mv.put("usedBytes",  v.usedBytes());
+                    values.add(mv);
+                }
+                x.put("values", values);
+            } else {
+                x.put("error", r.error());
+            }
+            out.add(x);
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("deviceName",  deviceName);
+        result.put("profileName", profile.name());
+        result.put("results",     out);
+        writeJson(resp, result);
     }
 
     private void create(HttpServletRequest req, HttpServletResponse resp) throws Exception {

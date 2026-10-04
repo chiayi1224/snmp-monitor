@@ -628,6 +628,12 @@ assert_status "修改內建範本回 403" 403
 call DELETE "/api/admin/profiles/${BUILTIN_ID}"
 assert_status "刪除內建範本回 403" 403
 
+call POST /api/admin/profiles/preview -d "{\"profileId\":${PROFILE_ID}}"
+assert_status "預覽未指定設備回 400" 400
+
+call POST /api/admin/profiles/preview -d "{\"deviceName\":\"NoSuchDevice\",\"profileId\":${PROFILE_ID}}"
+assert_status "預覽不存在的設備回 404" 404
+
 call POST "/api/admin/profiles/${BUILTIN_ID}/copy"
 assert_status "複製內建範本" 201
 assert_contains "複本名稱" "複本"

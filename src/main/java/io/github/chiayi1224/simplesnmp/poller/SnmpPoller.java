@@ -4,12 +4,11 @@ import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.config.OidConstants;
 import io.github.chiayi1224.simplesnmp.model.DeviceStatus;
 import io.github.chiayi1224.simplesnmp.model.DiskInfo;
-import io.github.chiayi1224.simplesnmp.profile.MetricException;
 import io.github.chiayi1224.simplesnmp.profile.MetricProfile;
 import io.github.chiayi1224.simplesnmp.profile.MetricValue;
+import io.github.chiayi1224.simplesnmp.profile.ProfileCollector;
 import io.github.chiayi1224.simplesnmp.profile.ProfileMetric;
 import io.github.chiayi1224.simplesnmp.profile.ProfileResolver;
-import io.github.chiayi1224.simplesnmp.profile.SnmpResult;
 import io.github.chiayi1224.simplesnmp.snmp.SnmpException;
 import io.github.chiayi1224.simplesnmp.snmp.SnmpSession;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
@@ -17,7 +16,6 @@ import io.github.chiayi1224.simplesnmp.threshold.ThresholdEngine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.snmp4j.smi.Variable;
-import org.snmp4j.smi.VariableBinding;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -33,11 +31,10 @@ import java.util.concurrent.TimeUnit;
  * 每次 poll 前從 DB 重新讀取設備清單與範本，所以在 Web 新增/修改設備或範本後，
  * 下一個 poll 週期立即生效，不需要重啟程式。
  *
- * 每台設備的流程（Ping → GET → WALK → 計算 → 儲存與評估）：
+ * 每台設備的流程（Ping → GET／WALK 與計算由 {@link ProfileCollector} 負責 → 儲存與評估）：
  *  1. 範本所需的 OID 與 sysObjectID 合併成一次 GET；sysObjectID 改變時同一週期內改用新範本
- *  2. 表格類型各自 walk，同一個子樹只 walk 一次
- *  3. cpu／memory／disk 寫入既有資料表並走既有閾值，其他指標寫入 custom_metrics
- *  4. 單一指標計算失敗只記警告（每台設備每個指標每小時最多一次），不影響其他指標與設備狀態
+ *  2. cpu／memory／disk 寫入既有資料表並走既有閾值，其他指標寫入 custom_metrics
+ *  3. 單一指標計算失敗只記警告（每台設備每個指標每小時最多一次），不影響其他指標與設備狀態
  */
 public class SnmpPoller {
 
@@ -47,16 +44,14 @@ public class SnmpPoller {
     private final long            intervalSeconds;
     private final ThresholdEngine thresholdEngine;
 
-    /** 每個表格最多讀取的筆數 */
-    private static final int WALK_MAX_ROWS = 5_000;
-
     /** 指標失敗警告的最短間隔 */
     private static final long WARN_INTERVAL_MS = TimeUnit.HOURS.toMillis(1);
 
     /** 設備::指標 → 上次記錄失敗警告的時間 */
     private final Map<String, Long> failureLoggedAt = new ConcurrentHashMap<>();
 
-    private SnmpSession session;
+    private SnmpSession      session;
+    private ProfileCollector collector;
     private ScheduledExecutorService scheduler;
 
     public SnmpPoller(MetricStore store, long intervalSeconds) {
@@ -69,12 +64,16 @@ public class SnmpPoller {
         this.intervalSeconds = intervalSeconds;
         this.thresholdEngine = new ThresholdEngine(store);
         this.session         = session;
+        this.collector       = session == null ? null : new ProfileCollector(session);
     }
 
     // ─── 啟動 / 停止 ─────────────────────────────────────────────
 
     public void start() throws IOException {
-        if (session == null) session = new SnmpSession();
+        if (session == null) {
+            session   = new SnmpSession();
+            collector = new ProfileCollector(session);
+        }
 
         scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "snmp-poller");
@@ -134,17 +133,13 @@ public class SnmpPoller {
 
         // ── 第二層：依範本 GET 與 WALK ────────────────────────────
         // GET 無回應、v3 認證失敗等 → SNMP_ERROR（SnmpSession 會清除 v3 engine ID 快取）
-        MetricProfile profile;
-        SnmpResult    result;
-        Map<String, String> walkErrors = new HashMap<>();
+        MetricProfile profile = resolver.resolve(device.getProfileId(), device.getSysObjectId());
+        ProfileCollector.Fetched fetched;
         try {
-            profile = resolver.resolve(device.getProfileId(), device.getSysObjectId());
-            List<String> oids = new ArrayList<>(scalarOids(profile));
-            oids.add(0, OidConstants.SYS_OBJECT_ID);
-            Map<String, Variable> scalars = new HashMap<>(session.get(device, oids));
+            ProfileCollector.Scalars scalars = collector.get(device, profile, List.of(OidConstants.SYS_OBJECT_ID));
 
-            // sysObjectID 改變（含首次取得）：保存並在同一週期改用新範本，補查新範本需要的 OID
-            Variable sysOid = scalars.get(OidConstants.SYS_OBJECT_ID);
+            // sysObjectID 改變（含首次取得）：保存並在同一週期改用新範本
+            Variable sysOid = scalars.values().get(OidConstants.SYS_OBJECT_ID);
             String sysObjectId = SnmpSession.isMissing(sysOid) ? "" : sysOid.toString();
             if (!sysObjectId.isEmpty() && !sysObjectId.equals(device.getSysObjectId())) {
                 store.updateDeviceSysObjectId(name, sysObjectId);
@@ -152,79 +147,29 @@ public class SnmpPoller {
                 if (!Objects.equals(resolved.id(), profile.id())) {
                     log.info("[{}] sysObjectID={}，套用監控範本「{}」", name, sysObjectId, resolved.name());
                     profile = resolved;
-                    List<String> more = new ArrayList<>(scalarOids(profile));
-                    more.removeAll(oids);
-                    if (!more.isEmpty()) scalars.putAll(session.get(device, more));
                 }
             }
-            result = new SnmpResult(scalars, walkTables(device, profile, walkErrors));
+            // 範本確定後才補查缺少的 OID 並走訪表格
+            fetched = collector.complete(device, profile, scalars);
         } catch (SnmpException e) {
             log.warn("[{}] SNMP 查詢失敗，標記 SNMP_ERROR：{}", name, e.getMessage());
             updateStatus(name, DeviceStatus.SNMP_ERROR);
             return;
         }
 
-        // ── 第三層：逐指標計算、儲存與評估 ───────────────────────
-        for (ProfileMetric metric : profile.metrics()) {
-            if (!metric.enabled()) continue;
-            try {
-                List<MetricValue> values = calculate(metric, result);
-                record(name, metric, values);
-                failureLoggedAt.remove(name + "::" + metric.metricKey());
-            } catch (MetricException e) {
-                String reason = walkErrorFor(metric, walkErrors);
-                warnLimited(name, metric.metricKey(), reason != null ? reason : e.getMessage());
+        // ── 第三層：逐指標儲存與評估 ─────────────────────────────
+        for (ProfileCollector.MetricResult r : ProfileCollector.calculate(profile, fetched)) {
+            String key = r.metric().metricKey();
+            if (r.ok()) {
+                record(name, r.metric(), r.values());
+                failureLoggedAt.remove(name + "::" + key);
+            } else {
+                warnLimited(name, key, r.error());
             }
         }
 
         // Ping + SNMP 均正常
         updateStatus(name, DeviceStatus.ONLINE);
-    }
-
-    /** 範本中已啟用指標需要 GET 的 OID（不重複，依指標順序） */
-    private static List<String> scalarOids(MetricProfile profile) {
-        Set<String> oids = new LinkedHashSet<>();
-        for (ProfileMetric m : profile.metrics()) {
-            if (m.enabled()) oids.addAll(m.kind().requiredScalarOids(m.params()));
-        }
-        return new ArrayList<>(oids);
-    }
-
-    /** 範本中已啟用指標需要的表格，同一個子樹只 walk 一次；中途失敗記錄原因，不影響其他表格 */
-    private Map<String, List<VariableBinding>> walkTables(DeviceConfig device, MetricProfile profile,
-                                                          Map<String, String> errors) throws IOException {
-        Set<String> roots = new LinkedHashSet<>();
-        for (ProfileMetric m : profile.metrics()) {
-            if (m.enabled()) roots.addAll(m.kind().requiredWalkRoots(m.params()));
-        }
-        Map<String, List<VariableBinding>> walks = new HashMap<>();
-        for (String root : roots) {
-            try {
-                SnmpSession.WalkResult walk = session.walk(device, root, WALK_MAX_ROWS, 0);
-                if (walk.error() != null) errors.put(root, "表格 " + root + " 讀取中斷：" + walk.error());
-                walks.put(root, walk.rows());
-            } catch (SnmpException e) {
-                errors.put(root, "表格 " + root + " 讀取失敗：" + e.getMessage());
-                walks.put(root, List.of());
-            }
-        }
-        return walks;
-    }
-
-    private static List<MetricValue> calculate(ProfileMetric metric, SnmpResult result) throws MetricException {
-        List<MetricValue> values = metric.kind().calculate(metric.params(), result);
-        for (MetricValue v : values) {
-            if (!Double.isFinite(v.value())) throw new MetricException("計算結果不是有限數值：" + v.value());
-        }
-        return values;
-    }
-
-    /** 表格讀取失敗時，以該錯誤作為指標失敗的原因（比「表格沒有資料」更明確） */
-    private static String walkErrorFor(ProfileMetric metric, Map<String, String> walkErrors) {
-        for (String root : metric.kind().requiredWalkRoots(metric.params())) {
-            if (walkErrors.containsKey(root)) return walkErrors.get(root);
-        }
-        return null;
     }
 
     /** 依指標名稱分派：cpu／memory／disk 寫既有資料表，其他寫 custom_metrics */
