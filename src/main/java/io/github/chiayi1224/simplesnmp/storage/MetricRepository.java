@@ -51,6 +51,15 @@ final class MetricRepository {
         } catch (SQLException ex) { log.error("saveDisk: {}", ex.getMessage()); }
     }
 
+    // ─── 資料保存期限 ─────────────────────────────────────────────
+
+    /** 刪除 cutoff 之前的 CPU / 記憶體 / 磁碟指標，回傳刪除筆數 */
+    int purgeBefore(String cutoff) throws SQLException {
+        return db.update("DELETE FROM cpu_metrics  WHERE ts < ?", cutoff)
+             + db.update("DELETE FROM mem_metrics  WHERE ts < ?", cutoff)
+             + db.update("DELETE FROM disk_metrics WHERE ts < ?", cutoff);
+    }
+
     // ─── 查詢（Web API）───────────────────────────────────────────
 
     List<String> queryDeviceNames() {

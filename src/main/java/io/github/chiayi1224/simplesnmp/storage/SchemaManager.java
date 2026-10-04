@@ -239,6 +239,12 @@ final class SchemaManager {
         """,
         "CREATE INDEX IF NOT EXISTS idx_scan_device ON device_scans(device_name, id)",
 
+        // 資料保存期限依時間清除用
+        "CREATE INDEX IF NOT EXISTS idx_cpu_ts   ON cpu_metrics(ts)",
+        "CREATE INDEX IF NOT EXISTS idx_mem_ts   ON mem_metrics(ts)",
+        "CREATE INDEX IF NOT EXISTS idx_disk_ts  ON disk_metrics(ts)",
+        "CREATE INDEX IF NOT EXISTS idx_alert_ts ON alert_events(ts)",
+
         // 掃描到的 OID（依走訪順序寫入，以 rowid 排序即為 OID 數字順序）
         """
         CREATE TABLE IF NOT EXISTS device_scan_results (

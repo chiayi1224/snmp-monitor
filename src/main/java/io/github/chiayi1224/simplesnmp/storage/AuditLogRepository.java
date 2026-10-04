@@ -33,6 +33,11 @@ final class AuditLogRepository {
         }
     }
 
+    /** 刪除 cutoff 之前的稽核日誌，回傳刪除筆數 */
+    int purgeBefore(String cutoff) throws SQLException {
+        return db.update("DELETE FROM audit_logs WHERE ts < ?", cutoff);
+    }
+
     /** 查詢稽核日誌；eventType 精確比對、actor 模糊比對，空值代表不篩選 */
     List<Map<String, Object>> query(String eventType, String actor, int limit) {
         StringBuilder sql = new StringBuilder(
