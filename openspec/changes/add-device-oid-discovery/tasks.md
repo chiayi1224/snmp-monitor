@@ -27,8 +27,8 @@
 
 ## 4. OID 探索網頁
 
-- [ ] 4.1 `index.html` 新增「OID 探索」分頁：設備選單、掃描選項（是否 walk、子樹）、進度輪詢、系統資訊、MIB 探測表、OID 表（前綴／關鍵字篩選、分頁）；所有值經 `esc()`；驗證：Playwright 腳本對本機 SNMP4J agent 執行一次掃描並截圖，確認三個區塊都有內容
-- [ ] 4.2 XSS 檢查：本機 agent 回傳含 `<script>` 的 sysDescr；驗證：Playwright 確認頁面顯示為文字且未執行
+- [x] 4.1 `index.html` 新增「OID 探索」分頁：設備選單、掃描選項（是否 walk、子樹）、進度輪詢、系統資訊、MIB 探測表、OID 表（前綴／關鍵字篩選、分頁）；所有值經 `esc()`；驗證：Playwright 腳本對本機 SNMP4J agent 執行一次掃描並截圖，確認三個區塊都有內容
+- [x] 4.2 XSS 檢查：本機 agent 回傳含 `<script>` 的 sysDescr；驗證：Playwright 確認頁面顯示為文字且未執行
 
 ## 5. Trap 對應與未定義 Trap（trap-mapping）
 

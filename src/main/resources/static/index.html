@@ -37,7 +37,6 @@
   .dialog-body { padding: 20px; display: flex; flex-direction: column; gap: 12px; }
   .dialog-footer { padding: 12px 20px; text-align: right; border-top: 1px solid #eee; display: flex; gap: 8px; justify-content: flex-end; }
   label { font-size: .85rem; color: #555; }
-  .hint { color: #2e7d32; font-size: .75rem; }
   input[type=text], input[type=password], input[type=number], select { width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: .9rem; margin-top: 4px; }
   .toggle { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
   .pct-bar { display: inline-block; width: 80px; height: 8px; background: #eee; border-radius: 4px; vertical-align: middle; margin-right: 6px; overflow: hidden; }
@@ -45,6 +44,15 @@
   .alert-triggered { color: #c62828; font-weight: 600; }
   .alert-resolved  { color: #2e7d32; }
   .hint { font-size: .8rem; color: #e65100; margin-top: 4px; }
+  .panel { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1); padding: 12px 16px; margin-bottom: 16px; font-size: .9rem; }
+  .panel.err { border-left: 4px solid #c62828; }
+  .panel.run { border-left: 4px solid #1565c0; }
+  .panel.ok  { border-left: 4px solid #2e7d32; }
+  .inline-input { width: auto !important; padding: 6px 8px !important; margin-top: 0 !important; font-size: .85rem !important; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; word-break: break-all; }
+  .samples { margin: 0; padding-left: 16px; color: #555; font-size: .8rem; }
+  .pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin: 8px 0 20px; font-size: .85rem; color: #666; }
+  .section-gap { margin-top: 20px; }
   footer { text-align: center; padding: 16px; font-size: .75rem; color: #bbb; margin-top: 24px; }
 </style>
 </head>
@@ -56,6 +64,7 @@
   <nav>
     <button class="active" onclick="showTab('status', this)">狀態</button>
     <button onclick="showTab('devices', this)">設備管理</button>
+    <button onclick="showTab('discovery', this)">OID 探索</button>
     <button onclick="showTab('alerts', this)">告警記錄</button>
     <button onclick="showTab('users', this)">帳號管理</button>
     <button onclick="showTab('tokens', this)">API Token</button>
@@ -85,6 +94,51 @@
     <table>
       <thead><tr><th>名稱</th><th>IP / Host</th><th>Port</th><th>SNMP</th><th>狀態</th><th>操作</th></tr></thead>
       <tbody id="devices-body"><tr><td colspan="6" style="color:#aaa">載入中...</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- OID 探索 -->
+  <section id="tab-discovery">
+    <div class="toolbar" style="gap:8px;justify-content:flex-start;flex-wrap:wrap;align-items:center">
+      <select id="disc-device" class="inline-input" onchange="loadScans()"></select>
+      <label class="toggle" style="margin:0"><input type="checkbox" id="disc-walk"><span>完整走訪 OID</span></label>
+      <input type="text" id="disc-subtrees" class="inline-input" style="width:340px"
+             placeholder="子樹（選填，逗號分隔；預設為 MIB-2 與廠牌子樹）">
+      <button class="btn btn-primary" id="disc-start" onclick="startScan()">開始掃描</button>
+    </div>
+    <div id="disc-status" class="panel">選擇設備後按「開始掃描」。只會發出讀取請求（GET / GETNEXT / GETBULK）。</div>
+
+    <div id="disc-result" style="display:none">
+      <h2>系統資訊</h2>
+      <table><tbody id="disc-sys"></tbody></table>
+
+      <h2 class="section-gap">常見 MIB 支援</h2>
+      <table>
+        <thead><tr><th>項目</th><th>MIB</th><th>支援</th><th>取樣</th></tr></thead>
+        <tbody id="disc-probes"></tbody>
+      </table>
+
+      <h2 class="section-gap">OID 清單（共 <span id="disc-oid-total">0</span> 筆）</h2>
+      <div class="toolbar" style="gap:8px;justify-content:flex-start">
+        <input type="text" id="disc-prefix" class="inline-input" style="width:240px" placeholder="OID 前綴，例如 1.3.6.1.2.1.2.2">
+        <input type="text" id="disc-q" class="inline-input" style="width:200px" placeholder="值的關鍵字">
+        <button class="btn btn-primary" onclick="loadOids(0)">篩選</button>
+      </div>
+      <table>
+        <thead><tr><th style="width:38%">OID</th><th style="width:14%">型別</th><th>值</th></tr></thead>
+        <tbody id="disc-oids"></tbody>
+      </table>
+      <div class="pager">
+        <span id="disc-page-info"></span>
+        <button class="btn btn-sm" id="disc-prev" onclick="loadOids(discOffset - DISC_PAGE)">上一頁</button>
+        <button class="btn btn-sm" id="disc-next" onclick="loadOids(discOffset + DISC_PAGE)">下一頁</button>
+      </div>
+    </div>
+
+    <h2 class="section-gap">掃描紀錄（每台設備保留最近 3 次）</h2>
+    <table>
+      <thead><tr><th>#</th><th>開始時間</th><th>狀態</th><th>OID 筆數</th><th>操作</th></tr></thead>
+      <tbody id="disc-scans"><tr><td colspan="5" style="color:#aaa">尚無掃描</td></tr></tbody>
     </table>
   </section>
 
@@ -273,6 +327,7 @@ function showTab(name, btn) {
   if (name === 'status')  loadStatus();
   if (name === 'devices') loadDevices();
   if (name === 'alerts')  loadAlerts();
+  if (name === 'discovery') loadDiscovery();
   if (name === 'users')   loadUsers();
   if (name === 'tokens') loadTokens();
   if (name === 'audit')  loadAudit();
@@ -392,6 +447,123 @@ async function saveDevice() {
   const res = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
   if (res.ok) { closeDialog('device-dialog'); loadDevices(); }
   else { const e = await res.json(); alert(e.error || '儲存失敗'); }
+}
+
+// ─── OID 探索 ────────────────────────────────────────────────
+const DISC_PAGE = 100;
+let discScanId = null, discOffset = 0, discTimer = null;
+const SCAN_STATUS = { RUNNING: '進行中', COMPLETED: '完成', FAILED: '失敗' };
+
+async function loadDiscovery() {
+  const devices = await fetch('/api/v1/devices',
+    { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' })
+    .then(r => r.json()).catch(() => []);
+  const sel = $('disc-device'), keep = sel.value;
+  sel.innerHTML = devices.length
+    ? devices.map(d => `<option value="${esc(d.name)}">${esc(d.name)}（${esc(d.host)}，v${esc(d.snmpVersion || '2c')}）</option>`).join('')
+    : '<option value="">尚無設備</option>';
+  if (devices.some(d => d.name === keep)) sel.value = keep;
+  loadScans();
+}
+
+async function loadScans(showLatest = true) {
+  const device = $('disc-device').value;
+  if (!device) return;
+  const scans = await fetch(`/api/admin/discovery/scans?device=${encodeURIComponent(device)}`)
+    .then(r => r.json()).catch(() => []);
+  $('disc-scans').innerHTML = scans.length ? scans.map(s => `<tr>
+      <td>${esc(s.id)}</td><td>${esc(fmtTime(s.started))}</td>
+      <td>${esc(SCAN_STATUS[s.status] || s.status)}${s.truncated ? '（已截斷）' : ''}</td>
+      <td>${esc(s.oidCount)}</td>
+      <td><button class="btn btn-sm btn-primary" onclick="showScan(${jsArg(s.id)})">檢視</button></td>
+    </tr>`).join('')
+    : '<tr><td colspan="5" style="color:#aaa">尚無掃描</td></tr>';
+  if (showLatest) {
+    if (scans.length) showScan(scans[0].id);
+    else { discScanId = null; $('disc-result').style.display = 'none'; setDiscStatus('', '尚未掃描過此設備。'); }
+  }
+}
+
+async function startScan() {
+  const deviceName = $('disc-device').value;
+  if (!deviceName) { alert('請先新增設備'); return; }
+  const subtrees = $('disc-subtrees').value.split(',').map(s => s.trim()).filter(Boolean);
+  const res = await fetch('/api/admin/discovery/scans', { method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ deviceName, walk: $('disc-walk').checked, subtrees }) });
+  const data = await res.json();
+  if (res.status === 202 || res.status === 409) showScan(data.scanId);
+  else alert(data.error || '無法啟動掃描');
+}
+
+async function showScan(id) {
+  clearTimeout(discTimer);
+  discScanId = id;
+  const scan = await fetch(`/api/admin/discovery/scans/${encodeURIComponent(id)}`).then(r => r.json());
+  if (discScanId !== id) return;   // 使用者已切換到其他掃描
+  if (scan.status === 'RUNNING') {
+    $('disc-start').disabled = true;
+    setDiscStatus('run', `掃描 #${esc(scan.id)} 進行中：${esc(scan.progress || '')}`);
+    discTimer = setTimeout(() => showScan(id), 2000);
+    return;
+  }
+  $('disc-start').disabled = false;
+  if (scan.status === 'FAILED') {
+    setDiscStatus('err', `掃描 #${esc(scan.id)} 失敗：${esc(scan.error || '未知原因')}`);
+  } else {
+    setDiscStatus('ok', `掃描 #${esc(scan.id)} 完成於 ${esc(fmtTime(scan.finished))}，收集 ${esc(scan.oidCount)} 筆 OID`
+      + (scan.truncated ? '（已達上限，結果已截斷）' : ''));
+  }
+  renderScan(scan);
+  loadScans(false);
+}
+
+function setDiscStatus(kind, html) {
+  const el = $('disc-status');
+  el.className = 'panel ' + kind;
+  el.innerHTML = html;
+}
+
+function renderScan(scan) {
+  $('disc-result').style.display = '';
+  const rows = [['廠牌', scan.vendor], ['sysName', scan.sysName], ['sysObjectID', scan.sysObjectId],
+                ['sysUpTime', scan.sysUpTime], ['sysDescr', scan.sysDescr]];
+  $('disc-sys').innerHTML = rows.map(([k, v]) =>
+    `<tr><td style="width:160px;color:#888">${esc(k)}</td><td class="mono">${esc(v ?? '—')}</td></tr>`).join('');
+  const probes = scan.probes || [];
+  $('disc-probes').innerHTML = probes.length ? probes.map(p => `<tr>
+      <td>${esc(p.name)}</td><td class="mono">${esc(p.mib)}</td>
+      <td><span class="badge ${p.supported ? 'ok' : 'off'}">${p.supported ? '支援' : '不支援'}</span></td>
+      <td>${p.samples && p.samples.length
+          ? '<ul class="samples">' + p.samples.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>'
+          : `<span style="color:#aaa">${esc(p.error || '—')}</span>`}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="4" style="color:#aaa">無探測結果</td></tr>';
+  loadOids(0);
+}
+
+async function loadOids(offset) {
+  if (discScanId == null) return;
+  discOffset = Math.max(0, offset);
+  const params = new URLSearchParams({ offset: discOffset, limit: DISC_PAGE });
+  if ($('disc-prefix').value.trim()) params.set('prefix', $('disc-prefix').value.trim());
+  if ($('disc-q').value.trim())      params.set('q', $('disc-q').value.trim());
+  const res = await fetch(`/api/admin/discovery/scans/${encodeURIComponent(discScanId)}/oids?${params}`);
+  const data = await res.json();
+  if (!res.ok) { alert(data.error || '查詢失敗'); return; }
+  $('disc-oid-total').textContent = data.total;
+  $('disc-oids').innerHTML = data.items.length ? data.items.map(o => `<tr>
+      <td class="mono">${esc(o.oid)}</td><td>${esc(o.type)}</td><td class="mono">${esc(o.value)}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="3" style="color:#aaa">沒有符合的 OID（未勾選「完整走訪」時不會收集 OID 清單）</td></tr>';
+  const end = Math.min(discOffset + DISC_PAGE, data.total);
+  $('disc-page-info').textContent = data.total ? `${discOffset + 1}–${end} / ${data.total}` : '';
+  $('disc-prev').disabled = discOffset === 0;
+  $('disc-next').disabled = end >= data.total;
+}
+
+function fmtTime(iso) {
+  return iso ? new Date(iso).toLocaleString('zh-TW', { hour12: false }) : '—';
 }
 
 async function deleteDevice(name) {
