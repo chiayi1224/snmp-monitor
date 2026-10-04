@@ -70,6 +70,7 @@
     <button onclick="showTab('users', this)">帳號管理</button>
     <button onclick="showTab('tokens', this)">API Token</button>
     <button onclick="showTab('audit', this)">稽核日誌</button>
+    <button onclick="showTab('settings', this)">系統設定</button>
     <span class="user-info" id="user-info"></span>
     <button class="btn-logout" onclick="logout()">登出</button>
   </nav>
@@ -164,6 +165,36 @@
     <table>
       <thead><tr><th>來源 IP</th><th>最後 Trap OID</th><th>次數</th><th>最後時間</th><th>操作</th></tr></thead>
       <tbody id="unknown-sources-body"><tr><td colspan="5" style="color:#aaa">載入中...</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- 系統設定 -->
+  <section id="tab-settings">
+    <h2>資料保存期限（每天自動清除，修改後下一次清除即生效）</h2>
+    <div class="panel">
+      <table style="box-shadow:none">
+        <tbody>
+          <tr><td style="width:180px">效能數據</td>
+              <td><input type="number" id="ret-metrics" min="0" max="36500" class="inline-input" style="width:110px"> 天</td>
+              <td style="color:#888;font-size:.85rem">CPU / 記憶體 / 磁碟</td></tr>
+          <tr><td>告警記錄</td>
+              <td><input type="number" id="ret-alerts" min="0" max="36500" class="inline-input" style="width:110px"> 天</td>
+              <td style="color:#888;font-size:.85rem">每個設備＋指標最後一筆狀態一律保留</td></tr>
+          <tr><td>稽核日誌</td>
+              <td><input type="number" id="ret-audit" min="0" max="36500" class="inline-input" style="width:110px"> 天</td>
+              <td style="color:#888;font-size:.85rem">登入、API 操作紀錄</td></tr>
+        </tbody>
+      </table>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
+        <span style="color:#888;font-size:.85rem">填 0 代表永久保留，最多 36500 天</span>
+        <button class="btn btn-primary" onclick="saveRetention()">儲存保存期限</button>
+      </div>
+    </div>
+
+    <h2 class="section-gap">其他設定</h2>
+    <table>
+      <thead><tr><th style="width:24%">設定</th><th>說明</th><th style="width:26%">值</th><th style="width:80px"></th></tr></thead>
+      <tbody id="settings-body"><tr><td colspan="4" style="color:#aaa">載入中...</td></tr></tbody>
     </table>
   </section>
 
@@ -374,6 +405,7 @@ function showTab(name, btn) {
   if (name === 'users')   loadUsers();
   if (name === 'tokens') loadTokens();
   if (name === 'audit')  loadAudit();
+  if (name === 'settings') loadSettings();
 }
 
 // ── 登出 ──────────────────────────────────────────────────────────
@@ -490,6 +522,53 @@ async function saveDevice() {
   const res = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
   if (res.ok) { closeDialog('device-dialog'); loadDevices(); }
   else { const e = await res.json(); alert(e.error || '儲存失敗'); }
+}
+
+// ─── 系統設定 ─────────────────────────────────────────────────
+const RETENTION_FIELDS = { 'ret-metrics': 'retention_metrics_days',
+                           'ret-alerts':  'retention_alerts_days',
+                           'ret-audit':   'retention_audit_days' };
+let settingKeys = [];
+
+async function loadSettings() {
+  const settings = await fetch('/api/admin/settings').then(r => r.json()).catch(() => ({}));
+  for (const [id, key] of Object.entries(RETENTION_FIELDS)) {
+    $(id).value = settings[key] ? settings[key].value : '';
+  }
+  const retentionKeys = Object.values(RETENTION_FIELDS);
+  settingKeys = Object.keys(settings).filter(k => !retentionKeys.includes(k));
+  $('settings-body').innerHTML = settingKeys.length ? settingKeys.map((k, i) => `<tr>
+      <td class="mono">${esc(k)}</td>
+      <td style="color:#666;font-size:.85rem">${esc(settings[k].description)}</td>
+      <td><input type="${k.includes('password') ? 'password' : 'text'}" id="setting-${i}"
+                 class="inline-input" style="width:100%" value="${esc(settings[k].value)}"></td>
+      <td><button class="btn btn-sm btn-primary" onclick="saveSetting(${i})">儲存</button></td>
+    </tr>`).join('')
+    : '<tr><td colspan="4" style="color:#aaa">沒有設定</td></tr>';
+}
+
+async function putSetting(key, value) {
+  const res = await fetch(`/api/admin/settings/${encodeURIComponent(key)}`, { method: 'PUT',
+    headers: {'Content-Type':'application/json'}, body: JSON.stringify({ value }) });
+  if (res.ok) return null;
+  const e = await res.json().catch(() => ({}));
+  return e.error || '儲存失敗';
+}
+
+async function saveRetention() {
+  for (const [id, key] of Object.entries(RETENTION_FIELDS)) {
+    const err = await putSetting(key, $(id).value.trim());
+    if (err) { alert(err); return; }
+  }
+  alert('保存期限已更新，下一次清除時生效');
+  loadSettings();
+}
+
+async function saveSetting(i) {
+  const err = await putSetting(settingKeys[i], $(`setting-${i}`).value.trim());
+  if (err) { alert(err); return; }
+  alert('設定已更新（port、Poll 間隔與 HTTPS 相關設定需重啟才生效）');
+  loadSettings();
 }
 
 // ─── Trap 對應 ───────────────────────────────────────────────
