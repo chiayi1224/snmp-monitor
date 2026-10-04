@@ -281,4 +281,45 @@ class DeviceServletTest {
         verify(resp).setStatus(400);
         verify(store, never()).updateDeviceByName(any(DeviceConfig.class), anyBoolean());
     }
+
+    // ─── 監控範本 ─────────────────────────────────────────────────
+
+    @Test
+    void POST_新增設備指定範本() throws Exception {
+        when(store.loadProfile(7)).thenReturn(new io.github.chiayi1224.simplesnmp.profile.MetricProfile(
+            7L, "Mine", "", "", false, List.of()));
+        when(store.loadEnabledDevices()).thenReturn(List.of());
+
+        post(null, "{\"name\":\"SW\",\"host\":\"10.0.0.1\",\"profileId\":7}");
+
+        assertEquals(7L, captureAdded().getProfileId());
+    }
+
+    @Test
+    void POST_指定不存在的範本回傳400() throws Exception {
+        post(null, "{\"name\":\"SW\",\"host\":\"10.0.0.1\",\"profileId\":99}");
+
+        verify(resp).setStatus(400);
+        verify(store, never()).addDevice(any(DeviceConfig.class));
+    }
+
+    @Test
+    void POST_更新時省略profileId沿用原設定_傳null改回自動() throws Exception {
+        when(store.loadProfile(7)).thenReturn(new io.github.chiayi1224.simplesnmp.profile.MetricProfile(
+            7L, "Mine", "", "", false, List.of()));
+        when(store.loadDevice("SW")).thenReturn(new DeviceConfig.Builder("SW", "10.0.0.1").profileId(7L).build());
+        when(store.loadEnabledDevices()).thenReturn(List.of());
+        ArgumentCaptor<DeviceConfig> captor = ArgumentCaptor.forClass(DeviceConfig.class);
+
+        post("/SW", "{\"host\":\"10.0.0.2\"}");
+        verify(store).updateDeviceByName(captor.capture(), eq(true));
+        assertEquals(7L, captor.getValue().getProfileId());
+
+        clearInvocations(store);
+        StringWriter second = new StringWriter();
+        when(resp.getWriter()).thenReturn(new PrintWriter(second));
+        post("/SW", "{\"host\":\"10.0.0.2\",\"profileId\":null}");
+        verify(store).updateDeviceByName(captor.capture(), eq(true));
+        assertNull(captor.getValue().getProfileId());
+    }
 }

@@ -2,6 +2,10 @@ package io.github.chiayi1224.simplesnmp.storage;
 
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
+import io.github.chiayi1224.simplesnmp.profile.BuiltinProfiles;
+import io.github.chiayi1224.simplesnmp.profile.MetricKind;
+import io.github.chiayi1224.simplesnmp.profile.MetricProfile;
+import io.github.chiayi1224.simplesnmp.profile.ProfileMetric;
 import io.github.chiayi1224.simplesnmp.threshold.AlertEvent;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -481,5 +485,86 @@ class MetricStoreTest {
         assertTrue (store.trapTriggeredOidExists("1.3.6.1.4.1.9999.0.7", -1));
         assertFalse(store.trapTriggeredOidExists("1.3.6.1.4.1.9999.0.7", id));
         assertFalse(store.trapTriggeredOidExists("1.3.6.1.4.1.9999.0.8", -1));
+    }
+
+    // ─── 監控範本 ─────────────────────────────────────────────────
+
+    private static MetricProfile sampleProfile(String name) {
+        return new MetricProfile(null, name, "測試", "1.3.6.1.4.1.99999", false, List.of(
+            new ProfileMetric("cpu", MetricKind.VALUE, Map.of("oid", "1.3.6.1.4.1.99999.2.1.0"), "%", true),
+            new ProfileMetric("temperature", MetricKind.VALUE, Map.of("oid", "1.3.6.1.4.1.99999.3.1.0", "scale", "0.1"), "°C", false)));
+    }
+
+    @Test
+    void 範本_首次啟動建立三個內建範本() {
+        List<MetricProfile> all = store.loadProfiles();
+        assertEquals(List.of(BuiltinProfiles.CISCO_IOS, BuiltinProfiles.HOST_RESOURCES, BuiltinProfiles.NET_SNMP),
+            all.stream().filter(MetricProfile::builtin).map(MetricProfile::name).sorted().toList());
+        assertTrue(all.stream().allMatch(p -> !p.metrics().isEmpty()));
+    }
+
+    @Test
+    void 範本_新增查詢更新刪除() throws SQLException {
+        long id = store.createProfile(sampleProfile("Switch-X"));
+
+        MetricProfile loaded = store.loadProfile(id);
+        assertEquals("Switch-X", loaded.name());
+        assertEquals(2, loaded.metrics().size());
+        ProfileMetric temp = loaded.metrics().get(1);
+        assertEquals("0.1", temp.params().get("scale"));
+        assertEquals("°C", temp.unit());
+        assertFalse(temp.enabled());
+
+        store.updateProfile(id, new MetricProfile(id, "Switch-Y", "", "", false, List.of(loaded.metrics().get(0))));
+        assertEquals("Switch-Y", store.loadProfile(id).name());
+        assertEquals(1, store.loadProfile(id).metrics().size());
+
+        store.deleteProfile(id);
+        assertNull(store.loadProfile(id));
+    }
+
+    @Test
+    void 範本_名稱重複檢查排除自己() throws SQLException {
+        long id = store.createProfile(sampleProfile("Switch-X"));
+
+        assertTrue (store.profileNameExists("Switch-X", -1));
+        assertFalse(store.profileNameExists("Switch-X", id));
+        assertTrue (store.profileNameExists(BuiltinProfiles.CISCO_IOS, id), "不可使用內建範本的名稱");
+    }
+
+    @Test
+    void 範本_重複啟動不產生重複內建範本_使用者複本不被覆蓋(@TempDir Path dir) throws Exception {
+        String dbPath = dir.resolve("profiles.db").toString();
+        try (MetricStore first = new MetricStore(dbPath)) {
+            MetricProfile net = first.loadProfiles().stream()
+                .filter(p -> p.name().equals(BuiltinProfiles.NET_SNMP)).findFirst().orElseThrow();
+            first.createProfile(new MetricProfile(null, BuiltinProfiles.NET_SNMP + "（複本）", "我的修改",
+                net.matchPrefix(), false, List.of(net.metrics().get(0))));
+        }
+        try (MetricStore second = new MetricStore(dbPath)) {
+            List<MetricProfile> all = second.loadProfiles();
+            assertEquals(3, all.stream().filter(MetricProfile::builtin).count());
+            MetricProfile copy = all.stream().filter(p -> p.name().endsWith("（複本）")).findFirst().orElseThrow();
+            assertEquals("我的修改", copy.description());
+            assertEquals(1, copy.metrics().size());
+        }
+    }
+
+    @Test
+    void 範本_設備套用與刪除後改回自動() throws SQLException {
+        long id = store.createProfile(sampleProfile("Switch-X"));
+        store.addDevice(new DeviceConfig.Builder("Core-SW", "10.0.0.9").profileId(id).build());
+        store.addDevice(new DeviceConfig.Builder("Linux-1", "10.0.0.1").build());
+        store.updateDeviceSysObjectId("Linux-1", "1.3.6.1.4.1.8072.3.2.10");
+
+        assertEquals("Switch-X", store.queryDeviceByName("Core-SW").get("appliedProfileName"));
+        assertEquals(id, store.loadDevice("Core-SW").getProfileId());
+        assertEquals(BuiltinProfiles.NET_SNMP, store.queryDeviceByName("Linux-1").get("appliedProfileName"));
+        assertEquals("1.3.6.1.4.1.8072.3.2.10", store.loadDevice("Linux-1").getSysObjectId());
+
+        store.deleteProfile(id);
+
+        assertNull(store.loadDevice("Core-SW").getProfileId());
+        assertEquals(BuiltinProfiles.HOST_RESOURCES, store.queryDeviceByName("Core-SW").get("appliedProfileName"));
     }
 }

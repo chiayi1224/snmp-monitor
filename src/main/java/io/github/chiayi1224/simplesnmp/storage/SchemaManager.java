@@ -239,6 +239,31 @@ final class SchemaManager {
         """,
         "CREATE INDEX IF NOT EXISTS idx_scan_device ON device_scans(device_name, id)",
 
+        // 監控範本：一份範本描述一類設備的指標要從哪些 OID、用什麼方式計算
+        """
+        CREATE TABLE IF NOT EXISTS metric_profiles (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            name         TEXT    NOT NULL UNIQUE,
+            description  TEXT    NOT NULL DEFAULT '',
+            match_prefix TEXT    NOT NULL DEFAULT '',
+            builtin      INTEGER NOT NULL DEFAULT 0,
+            created      TEXT    NOT NULL,
+            updated      TEXT    NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS profile_metrics (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            profile_id  INTEGER NOT NULL,
+            metric_key  TEXT    NOT NULL,
+            kind        TEXT    NOT NULL,
+            params_json TEXT    NOT NULL DEFAULT '{}',
+            unit        TEXT    NOT NULL DEFAULT '',
+            enabled     INTEGER NOT NULL DEFAULT 1,
+            UNIQUE(profile_id, metric_key)
+        )
+        """,
+
         // 資料保存期限依時間清除用
         "CREATE INDEX IF NOT EXISTS idx_cpu_ts   ON cpu_metrics(ts)",
         "CREATE INDEX IF NOT EXISTS idx_mem_ts   ON mem_metrics(ts)",
@@ -270,6 +295,8 @@ final class SchemaManager {
         "ALTER TABLE devices ADD COLUMN v3_auth_password TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE devices ADD COLUMN v3_priv_protocol TEXT NOT NULL DEFAULT 'AES128'",
         "ALTER TABLE devices ADD COLUMN v3_priv_password TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE devices ADD COLUMN profile_id INTEGER",
+        "ALTER TABLE devices ADD COLUMN sys_object_id TEXT NOT NULL DEFAULT ''",
     };
 
     private final Db db;

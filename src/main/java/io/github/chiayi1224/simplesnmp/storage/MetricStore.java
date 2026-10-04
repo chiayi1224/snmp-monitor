@@ -4,6 +4,9 @@ import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.config.TrapOidMapping;
 import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
 import io.github.chiayi1224.simplesnmp.model.DiskInfo;
+import io.github.chiayi1224.simplesnmp.profile.BuiltinProfiles;
+import io.github.chiayi1224.simplesnmp.profile.MetricProfile;
+import io.github.chiayi1224.simplesnmp.profile.ProfileResolver;
 import io.github.chiayi1224.simplesnmp.threshold.AlertEvent;
 import io.github.chiayi1224.simplesnmp.threshold.ThresholdConfig;
 import org.slf4j.Logger;
@@ -35,6 +38,7 @@ import java.util.Map;
  *   api_tokens          — {@link ApiTokenRepository}  API Token
  *   audit_logs          — {@link AuditLogRepository}  稽核日誌
  *   device_scans / device_scan_results — {@link DiscoveryRepository} OID 掃描結果
+ *   metric_profiles / profile_metrics   — {@link ProfileRepository}   監控範本
  */
 public class MetricStore implements AutoCloseable {
 
@@ -54,6 +58,7 @@ public class MetricStore implements AutoCloseable {
     private final ApiTokenRepository  apiTokens;
     private final AuditLogRepository  auditLogs;
     private final DiscoveryRepository discovery;
+    private final ProfileRepository   profiles;
 
     public MetricStore(String dbPath) throws Exception {
         // 確保父目錄存在（目錄不存在時自動建立，DB 檔由 SQLite JDBC 自動建立）
@@ -82,6 +87,7 @@ public class MetricStore implements AutoCloseable {
         apiTokens  = new ApiTokenRepository(db);
         auditLogs  = new AuditLogRepository(db);
         discovery  = new DiscoveryRepository(db);
+        profiles   = new ProfileRepository(db);
 
         users.seedDefaults();
         traps.seedDefaults();
@@ -90,6 +96,7 @@ public class MetricStore implements AutoCloseable {
         thresholds.seedDefaults();
         v3Users.seedDefaults();
         discovery.failInterruptedScans();
+        profiles.syncBuiltin(BuiltinProfiles.all());
         log.info("MetricStore 開啟: {}", dbPath);
     }
 
@@ -158,8 +165,23 @@ public class MetricStore implements AutoCloseable {
         return devices.loadEnabled();
     }
 
+    /** 設備清單；每台另附實際套用的範本（appliedProfileId / appliedProfileName） */
     public List<Map<String, Object>> queryAllDevices() {
-        return devices.queryAll();
+        ProfileResolver resolver = new ProfileResolver(profiles.loadAll());
+        List<Map<String, Object>> rows = devices.queryAll();
+        rows.forEach(r -> addAppliedProfile(r, resolver));
+        return rows;
+    }
+
+    private static void addAppliedProfile(Map<String, Object> row, ProfileResolver resolver) {
+        MetricProfile applied = resolver.resolve((Long) row.get("profileId"), (String) row.get("sysObjectId"));
+        row.put("appliedProfileId",   applied.id());
+        row.put("appliedProfileName", applied.name());
+    }
+
+    /** 輪詢時更新設備的 sysObjectID */
+    public void updateDeviceSysObjectId(String name, String sysObjectId) {
+        devices.updateSysObjectId(name, sysObjectId);
     }
 
     /** 新增設備（含 SNMP 版本與 v3 設定） */
@@ -202,7 +224,9 @@ public class MetricStore implements AutoCloseable {
 
     /** 依名稱查詢單台設備 */
     public Map<String, Object> queryDeviceByName(String name) {
-        return devices.queryByName(name);
+        Map<String, Object> row = devices.queryByName(name);
+        if (row != null) addAppliedProfile(row, new ProfileResolver(profiles.loadAll()));
+        return row;
     }
 
     /** 依名稱更新設備 */
@@ -451,6 +475,36 @@ public class MetricStore implements AutoCloseable {
     /** 查詢稽核日誌 */
     public List<Map<String, Object>> queryAuditLogs(String eventType, String actor, int limit) {
         return auditLogs.query(eventType, actor, limit);
+    }
+
+    // ─── 監控範本 ─────────────────────────────────────────────────
+
+    /** 所有範本（含指標），內建在前 */
+    public List<MetricProfile> loadProfiles() {
+        return profiles.loadAll();
+    }
+
+    /** 單一範本；不存在回傳 null */
+    public MetricProfile loadProfile(long id) {
+        return profiles.load(id);
+    }
+
+    public boolean profileNameExists(String name, long excludeId) throws SQLException {
+        return profiles.nameExists(name, excludeId);
+    }
+
+    public long createProfile(MetricProfile profile) throws SQLException {
+        return profiles.create(profile);
+    }
+
+    public void updateProfile(long id, MetricProfile profile) throws SQLException {
+        profiles.update(id, profile);
+    }
+
+    /** 刪除範本；原本手動指定此範本的設備改回自動套用 */
+    public void deleteProfile(long id) throws SQLException {
+        devices.clearProfile(id);
+        profiles.delete(id);
     }
 
     // ─── 資料保存期限 ─────────────────────────────────────────────

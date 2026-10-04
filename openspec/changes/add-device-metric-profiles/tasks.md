@@ -10,11 +10,11 @@
 
 ## 2. 範本資料與內建範本（device-metric-profiles 後端）
 
-- [ ] 2.1 `SchemaManager` 建立 `metric_profiles`、`profile_metrics`，補 `devices.profile_id`／`sys_object_id`；新增 `ProfileRepository` 並由 `MetricStore` 委派；驗證：`MetricStoreTest` 新增範本 CRUD、名稱重複、指標名稱重複測試
-- [ ] 2.2 新增 `BuiltinProfiles`（Net-SNMP、HOST-RESOURCES、Cisco IOS），啟動時依名稱同步；驗證：測試確認重複啟動不會產生重複範本、使用者複本不被覆蓋
-- [ ] 2.3 新增 `ProfileResolver`（手動指定 → 最長前綴 → HOST-RESOURCES）；驗證：單元測試涵蓋 spec「設備套用範本的規則」的四個情境
-- [ ] 2.4 新增 `ProfileServlet`（列表含套用設備數、CRUD、複製、內建 403、指標驗證 400）並註冊於 `JettyServer`；驗證：`ProfileServletTest` 涵蓋 201／400／403，`test.sh` 新增範本 API 段落
-- [ ] 2.5 `DeviceServlet`／`DeviceRepository` 支援 `profileId`，查詢回傳實際套用的範本名稱；刪除被指定的範本時清空設備的 `profile_id`；驗證：`DeviceServletTest` 與 `MetricStoreTest` 新增案例
+- [x] 2.1 `SchemaManager` 建立 `metric_profiles`、`profile_metrics`，補 `devices.profile_id`／`sys_object_id`；新增 `ProfileRepository` 並由 `MetricStore` 委派；驗證：`MetricStoreTest` 新增範本 CRUD、名稱重複、指標名稱重複測試
+- [x] 2.2 新增 `BuiltinProfiles`（Net-SNMP、HOST-RESOURCES、Cisco IOS），啟動時依名稱同步；驗證：測試確認重複啟動不會產生重複範本、使用者複本不被覆蓋
+- [x] 2.3 新增 `ProfileResolver`（手動指定 → 最長前綴 → HOST-RESOURCES）；驗證：單元測試涵蓋 spec「設備套用範本的規則」的四個情境
+- [x] 2.4 新增 `ProfileServlet`（列表含套用設備數、CRUD、複製、內建 403、指標驗證 400）並註冊於 `JettyServer`；驗證：`ProfileServletTest` 涵蓋 201／400／403，`test.sh` 新增範本 API 段落
+- [x] 2.5 `DeviceServlet`／`DeviceRepository` 支援 `profileId`，查詢回傳實際套用的範本名稱；刪除被指定的範本時清空設備的 `profile_id`；驗證：`DeviceServletTest` 與 `MetricStoreTest` 新增案例
 
 ## 3. 依範本收集（metric-collection 後端）
 

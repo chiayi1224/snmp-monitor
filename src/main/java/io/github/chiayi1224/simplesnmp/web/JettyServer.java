@@ -106,6 +106,7 @@ public class JettyServer {
         ctx.addServlet(new ServletHolder(new ApiTokenServlet(store)),                   "/api/admin/tokens/*");
         ctx.addServlet(new ServletHolder(new AuditLogServlet(store)),                   "/api/admin/audit-logs");
         ctx.addServlet(new ServletHolder(new DiscoveryServlet(store, discovery)),       "/api/admin/discovery/*");
+        ctx.addServlet(new ServletHolder(new ProfileServlet(store)),                    "/api/admin/profiles/*");
 
         // ── 靜態檔案 ──────────────────────────────────────────────
         String staticBase = JettyServer.class.getResource("/static").toExternalForm();

@@ -32,6 +32,7 @@
 
 ### D2. 固定的計算類型，而非運算式
 每種類型實作一個 `MetricCalculator`（介面：`requiredOids(params)`、`validate(params)`、`compute(params, SnmpResult) → List<MetricValue>`）。`STORAGE_TABLE` 會回傳多個值（每個掛載點一個，對應現有磁碟邏輯）；其他類型回傳一個值。
+- 實作時補充的驗證規則：`disk` 必須使用多值的 `STORAGE_TABLE`（依掛載點分別記錄）；其他指標只能產生單一值（使用 `STORAGE_TABLE` 時須設 `first=true`）。避免把多個值寫進只能存一個值的指標。
 - **替代方案：運算式（例如 `100 - $1`）**：彈性較高，但需要撰寫並維護解析器、處理除以零與注入問題，而目前觀察到的廠牌 MIB 都可用這七種類型涵蓋。之後若有需要再新增類型即可，不影響既有範本。
 
 ### D3. 內建範本以程式碼定義，啟動時同步

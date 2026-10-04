@@ -46,6 +46,8 @@ public class DeviceConfig {
     private final String                      v3AuthPassword;
     private final V3UserConfig.PrivProtocol   v3PrivProtocol;
     private final String                      v3PrivPassword;
+    private final Long                        profileId;     // 手動指定的監控範本；null 代表依 sysObjectID 自動套用
+    private final String                      sysObjectId;   // 最近一次輪詢取得的 sysObjectID；未知為 ""
 
     public DeviceConfig(String name, String host, String community) {
         this(name, host, 161, community, 2, 3000L);
@@ -69,6 +71,8 @@ public class DeviceConfig {
         this.v3AuthPassword = b.v3AuthPassword;
         this.v3PrivProtocol = b.v3PrivProtocol;
         this.v3PrivPassword = b.v3PrivPassword;
+        this.profileId      = b.profileId;
+        this.sysObjectId    = b.sysObjectId;
     }
 
     public String getName()      { return name; }
@@ -84,6 +88,8 @@ public class DeviceConfig {
     public String                    getV3AuthPassword() { return v3AuthPassword; }
     public V3UserConfig.PrivProtocol getV3PrivProtocol() { return v3PrivProtocol; }
     public String                    getV3PrivPassword() { return v3PrivPassword; }
+    public Long                      getProfileId()      { return profileId; }
+    public String                    getSysObjectId()    { return sysObjectId; }
 
     /** 組成 SNMP4J 用的 address 字串 */
     public String getUdpAddress() {
@@ -143,6 +149,8 @@ public class DeviceConfig {
         private String                    v3AuthPassword = "";
         private V3UserConfig.PrivProtocol v3PrivProtocol = V3UserConfig.PrivProtocol.AES128;
         private String                    v3PrivPassword = "";
+        private Long                      profileId      = null;
+        private String                    sysObjectId    = "";
 
         public Builder(String name, String host) { this.name = name; this.host = host; }
 
@@ -156,6 +164,8 @@ public class DeviceConfig {
         public Builder v3AuthPassword(String v)                  { this.v3AuthPassword = v; return this; }
         public Builder v3PrivProtocol(V3UserConfig.PrivProtocol v) { this.v3PrivProtocol = v; return this; }
         public Builder v3PrivPassword(String v)                  { this.v3PrivPassword = v; return this; }
+        public Builder profileId(Long v)                         { this.profileId = v; return this; }
+        public Builder sysObjectId(String v)                     { this.sysObjectId = v == null ? "" : v; return this; }
 
         public DeviceConfig build() { return new DeviceConfig(this); }
     }

@@ -574,6 +574,53 @@ call POST /api/admin/audit-logs -d '{"eventType":"LOGIN_FAIL","limit":10}'
 assert_status "查詢 LOGIN_FAIL" 200
 
 # ═════════════════════════════════════════════════════════════════
+section "16-0. 監控範本 API"
+# ═════════════════════════════════════════════════════════════════
+
+call GET /api/admin/profiles
+assert_status "列出範本" 200
+assert_contains "含內建 Net-SNMP 範本" "Net-SNMP"
+assert_contains "含內建 Cisco IOS 範本" "Cisco IOS"
+
+call POST /api/admin/profiles -d '{"name":"Switch-X","matchPrefix":"1.3.6.1.4.1.99999.1","metrics":[{"metricKey":"cpu","kind":"VALUE","params":{"oid":"1.3.6.1.4.1.99999.2.1.0"},"unit":"%"},{"metricKey":"temperature","kind":"VALUE","params":{"oid":"1.3.6.1.4.1.99999.3.1.0","scale":"0.1"},"unit":"°C"}]}'
+assert_status "新增範本" 201
+PROFILE_ID=$(jq_field '.id')
+
+call POST /api/admin/profiles -d '{"name":"Switch-X","metrics":[]}'
+assert_status "範本名稱重複回 409" 409
+
+call POST /api/admin/profiles -d '{"name":"Bad","metrics":[{"metricKey":"CPU Temp","kind":"VALUE","params":{"oid":"1.1"}}]}'
+assert_status "指標名稱不合法回 400" 400
+
+call POST /api/admin/profiles -d '{"name":"Bad","metrics":[{"metricKey":"temp","kind":"EXPRESSION"}]}'
+assert_status "不支援的計算類型回 400" 400
+
+BUILTIN_ID=$(curl -s -b "$COOKIE_JAR" "${BASE}/api/admin/profiles" | jq -r '.[] | select(.builtin) | .id' | head -1)
+call PUT "/api/admin/profiles/${BUILTIN_ID}" -d '{"name":"Hack","metrics":[]}'
+assert_status "修改內建範本回 403" 403
+
+call DELETE "/api/admin/profiles/${BUILTIN_ID}"
+assert_status "刪除內建範本回 403" 403
+
+call POST "/api/admin/profiles/${BUILTIN_ID}/copy"
+assert_status "複製內建範本" 201
+assert_contains "複本名稱" "複本"
+
+call POST /api/admin/devices -d "{\"name\":\"Profiled\",\"host\":\"192.168.1.70\",\"profileId\":${PROFILE_ID}}"
+assert_status "新增設備並指定範本" 201
+call POST /api/v1/devices/Profiled -d '{}'
+assert_contains "設備套用指定範本" '"appliedProfileName" : "Switch-X"'
+
+call POST /api/admin/devices -d '{"name":"BadProfile","host":"192.168.1.71","profileId":999999}'
+assert_status "指定不存在的範本回 400" 400
+
+call DELETE "/api/admin/profiles/${PROFILE_ID}"
+assert_status "刪除自訂範本" 200
+call POST /api/v1/devices/Profiled -d '{}'
+assert_contains "範本刪除後設備改回自動（HOST-RESOURCES）" "HOST-RESOURCES"
+call POST "/api/admin/devices/Profiled" -d '{"action":"delete"}'
+
+# ═════════════════════════════════════════════════════════════════
 section "16-1. OID 掃描 API"
 # ═════════════════════════════════════════════════════════════════
 
