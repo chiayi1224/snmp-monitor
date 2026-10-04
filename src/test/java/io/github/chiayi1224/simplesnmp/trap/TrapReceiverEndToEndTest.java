@@ -150,6 +150,16 @@ class TrapReceiverEndToEndTest {
     }
 
     @Test
+    void 新增設備後_同IP的Trap立即以新設備名稱記錄() throws Exception {
+        receiver.reloadDevices(List.of(new DeviceConfig("Router-02", "127.0.0.1", "public")));
+
+        sender.send(v2Trap(PDU.TRAP, CPU_HIGH), communityTarget(SnmpConstants.version2c, "public"));
+
+        assertEquals("Router-02", awaitAlert().getDeviceName());
+        verify(store, never()).saveUnknownSource(any(), any(), any());
+    }
+
+    @Test
     void v2c_inform_回覆確認並產生告警() throws Exception {
         ResponseEvent<UdpAddress> resp = sender.send(v2Trap(PDU.INFORM, CPU_HIGH),
             communityTarget(SnmpConstants.version2c, "public"));

@@ -273,6 +273,26 @@ public class MetricStore implements AutoCloseable {
         traps.saveUnknownSource(sourceIp, lastTrapOid, varbinds);
     }
 
+    /** 刪除一筆未定義 Trap 記錄；回傳是否有刪到 */
+    public boolean deleteUnknownTrap(long id) throws SQLException {
+        return traps.deleteUnknownTrap(id);
+    }
+
+    /** 刪除一筆未登錄來源記錄；回傳是否有刪到 */
+    public boolean deleteUnknownSource(long id) throws SQLException {
+        return traps.deleteUnknownSource(id);
+    }
+
+    /** 依來源 IP 刪除未登錄來源記錄 */
+    public void deleteUnknownSourceByIp(String sourceIp) throws SQLException {
+        traps.deleteUnknownSourceByIp(sourceIp);
+    }
+
+    /** 觸發 OID 是否已被其他對應使用（excludeId 為更新中的那一筆，新增時傳 -1） */
+    public boolean trapTriggeredOidExists(String triggeredOid, long excludeId) throws SQLException {
+        return traps.triggeredOidExists(triggeredOid, excludeId);
+    }
+
     /** 查詢所有未登錄來源記錄，依最後出現時間降冪 */
     public List<Map<String, Object>> queryUnknownSources() {
         return traps.queryUnknownSources();

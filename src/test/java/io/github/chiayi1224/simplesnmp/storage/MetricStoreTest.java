@@ -441,4 +441,45 @@ class MetricStoreTest {
             assertTrue(scan.get("error").toString().contains("重啟"));
         }
     }
+
+    // ─── 未定義 Trap / 未登錄來源 ─────────────────────────────────
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void 未定義Trap_刪除後同OID再次寫入從1計次() throws SQLException {
+        store.saveUnknownTrap("1.3.6.1.4.1.9999.0.7", "SW", "10.0.0.1", "a");
+        store.saveUnknownTrap("1.3.6.1.4.1.9999.0.7", "SW", "10.0.0.1", "b");
+        long id = (Long) store.queryUnknownTraps().get(0).get("id");
+        assertEquals(2, store.queryUnknownTraps().get(0).get("count"));
+
+        assertTrue(store.deleteUnknownTrap(id));
+        assertFalse(store.deleteUnknownTrap(id), "第二次刪除應回傳 false");
+        store.saveUnknownTrap("1.3.6.1.4.1.9999.0.7", "SW", "10.0.0.1", "c");
+
+        assertEquals(1, store.queryUnknownTraps().get(0).get("count"));
+    }
+
+    @Test
+    void 未登錄來源_依ID與依IP刪除() throws SQLException {
+        store.saveUnknownSource("10.0.0.98", "1.3.6.1", "");
+        store.saveUnknownSource("10.0.0.99", "1.3.6.1", "");
+        long id = (Long) store.queryUnknownSources().stream()
+            .filter(r -> "10.0.0.98".equals(r.get("sourceIp"))).findFirst().orElseThrow().get("id");
+
+        assertTrue(store.deleteUnknownSource(id));
+        store.deleteUnknownSourceByIp("10.0.0.99");
+
+        assertTrue(store.queryUnknownSources().isEmpty());
+    }
+
+    @Test
+    void 觸發OID重複檢查排除自己() throws SQLException {
+        store.addTrapMapping("fan", "1.3.6.1.4.1.9999.0.7", null, "");
+        long id = (Long) store.queryAllTrapMappings().stream()
+            .filter(r -> "fan".equals(r.get("metricName"))).findFirst().orElseThrow().get("id");
+
+        assertTrue (store.trapTriggeredOidExists("1.3.6.1.4.1.9999.0.7", -1));
+        assertFalse(store.trapTriggeredOidExists("1.3.6.1.4.1.9999.0.7", id));
+        assertFalse(store.trapTriggeredOidExists("1.3.6.1.4.1.9999.0.8", -1));
+    }
 }

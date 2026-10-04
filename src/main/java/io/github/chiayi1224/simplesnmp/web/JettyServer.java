@@ -98,7 +98,7 @@ public class JettyServer {
         ctx.addServlet(new ServletHolder(new DeviceServlet(store, trapReceiver)),       "/api/admin/devices/*");
         ctx.addServlet(new ServletHolder(new UserServlet(store)),                       "/api/admin/users/*");
         ctx.addServlet(new ServletHolder(new TrapMappingServlet(store, trapReceiver)),  "/api/admin/trap-mappings/*");
-        ctx.addServlet(new ServletHolder(new UnknownTrapServlet(store)),                "/api/admin/unknown-traps");
+        ctx.addServlet(new ServletHolder(new UnknownTrapServlet(store)),                "/api/admin/unknown-traps/*");
         ctx.addServlet(new ServletHolder(new PollOidServlet(store)),                    "/api/admin/poll-oids/*");
         ctx.addServlet(new ServletHolder(new SettingsServlet(store)),                   "/api/admin/settings/*");
         ctx.addServlet(new ServletHolder(new ThresholdServlet(store)),                  "/api/admin/thresholds/*");

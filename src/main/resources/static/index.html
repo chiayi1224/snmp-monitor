@@ -65,6 +65,7 @@
     <button class="active" onclick="showTab('status', this)">狀態</button>
     <button onclick="showTab('devices', this)">設備管理</button>
     <button onclick="showTab('discovery', this)">OID 探索</button>
+    <button onclick="showTab('traps', this)">Trap 對應</button>
     <button onclick="showTab('alerts', this)">告警記錄</button>
     <button onclick="showTab('users', this)">帳號管理</button>
     <button onclick="showTab('tokens', this)">API Token</button>
@@ -139,6 +140,30 @@
     <table>
       <thead><tr><th>#</th><th>開始時間</th><th>狀態</th><th>OID 筆數</th><th>操作</th></tr></thead>
       <tbody id="disc-scans"><tr><td colspan="5" style="color:#aaa">尚無掃描</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- Trap 對應 -->
+  <section id="tab-traps">
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="openMappingDialog()">＋ 新增對應</button>
+    </div>
+    <h2>Trap OID 對應（變更立即生效）</h2>
+    <table>
+      <thead><tr><th>指標</th><th>觸發 OID</th><th>恢復 OID</th><th>說明</th><th>狀態</th><th>操作</th></tr></thead>
+      <tbody id="mappings-body"><tr><td colspan="6" style="color:#aaa">載入中...</td></tr></tbody>
+    </table>
+
+    <h2 class="section-gap">未定義 Trap（收到但沒有對應規則）</h2>
+    <table>
+      <thead><tr><th>Trap OID</th><th>最後來源</th><th>次數</th><th>最後時間</th><th>VarBind</th><th>操作</th></tr></thead>
+      <tbody id="unknown-oids-body"><tr><td colspan="6" style="color:#aaa">載入中...</td></tr></tbody>
+    </table>
+
+    <h2 class="section-gap">未登錄來源（來源 IP 不在設備清單中）</h2>
+    <table>
+      <thead><tr><th>來源 IP</th><th>最後 Trap OID</th><th>次數</th><th>最後時間</th><th>操作</th></tr></thead>
+      <tbody id="unknown-sources-body"><tr><td colspan="5" style="color:#aaa">載入中...</td></tr></tbody>
     </table>
   </section>
 
@@ -244,6 +269,23 @@
   </div>
 </dialog>
 
+<!-- Trap 對應 Dialog -->
+<dialog id="mapping-dialog">
+  <div class="dialog-header" id="mapping-dialog-title">新增 Trap 對應</div>
+  <div class="dialog-body">
+    <input type="hidden" id="m-id"><input type="hidden" id="m-from-unknown">
+    <label>指標名稱 * <input type="text" id="m-metric" placeholder="例如 fan、link_down、cpu"></label>
+    <label>觸發 OID *（收到時產生 TRIGGERED 告警）<input type="text" id="m-triggered" class="mono"></label>
+    <label>恢復 OID（選填，收到時產生 RESOLVED）<input type="text" id="m-resolved" class="mono"></label>
+    <label>說明 <input type="text" id="m-desc"></label>
+    <label id="m-enabled-row"><div class="toggle"><input type="checkbox" id="m-enabled" checked><span>啟用</span></div></label>
+  </div>
+  <div class="dialog-footer">
+    <button class="btn" onclick="closeDialog('mapping-dialog')">取消</button>
+    <button class="btn btn-primary" onclick="saveMapping()">儲存</button>
+  </div>
+</dialog>
+
 <!-- 帳號 Dialog -->
 <dialog id="user-dialog">
   <div class="dialog-header" id="user-dialog-title">新增帳號</div>
@@ -328,6 +370,7 @@ function showTab(name, btn) {
   if (name === 'devices') loadDevices();
   if (name === 'alerts')  loadAlerts();
   if (name === 'discovery') loadDiscovery();
+  if (name === 'traps')   loadTraps();
   if (name === 'users')   loadUsers();
   if (name === 'tokens') loadTokens();
   if (name === 'audit')  loadAudit();
@@ -447,6 +490,101 @@ async function saveDevice() {
   const res = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
   if (res.ok) { closeDialog('device-dialog'); loadDevices(); }
   else { const e = await res.json(); alert(e.error || '儲存失敗'); }
+}
+
+// ─── Trap 對應 ───────────────────────────────────────────────
+async function loadTraps() {
+  const [mappings, unknown] = await Promise.all([
+    fetch('/api/admin/trap-mappings').then(r => r.json()).catch(() => []),
+    fetch('/api/admin/unknown-traps').then(r => r.json()).catch(() => ({ unknownOids: [], unknownSources: [] }))
+  ]);
+  $('mappings-body').innerHTML = mappings.length ? mappings.map(m => `<tr>
+      <td><strong>${esc(m.metricName)}</strong></td>
+      <td class="mono">${esc(m.triggeredOid)}</td>
+      <td class="mono">${esc(m.resolvedOid || '—')}</td>
+      <td>${esc(m.description)}</td>
+      <td><span class="badge ${m.enabled ? 'ok' : 'off'}">${m.enabled ? '啟用' : '停用'}</span></td>
+      <td>
+        <button class="btn btn-sm btn-primary" onclick="openMappingDialog(${jsArg(m)})">編輯</button>
+        <button class="btn btn-sm btn-danger"  onclick="deleteMapping(${jsArg(m.id)}, ${jsArg(m.metricName)})">刪除</button>
+      </td>
+    </tr>`).join('')
+    : '<tr><td colspan="6" style="color:#aaa">尚無對應</td></tr>';
+
+  const oids = unknown.unknownOids || [];
+  $('unknown-oids-body').innerHTML = oids.length ? oids.map(u => `<tr>
+      <td class="mono">${esc(u.trapOid)}</td>
+      <td>${esc(u.deviceName)}${u.deviceName !== u.sourceIp ? `<br><span style="color:#888">${esc(u.sourceIp)}</span>` : ''}</td>
+      <td>${esc(u.count)}</td>
+      <td>${esc(fmtTime(u.lastSeen))}</td>
+      <td class="mono" style="max-width:280px">${esc(u.varbinds || '—')}</td>
+      <td>
+        <button class="btn btn-sm btn-primary" onclick="openMappingDialog(null, ${jsArg(u)})">建立對應</button>
+        <button class="btn btn-sm btn-danger"  onclick="deleteUnknown('oids', ${jsArg(u.id)})">刪除</button>
+      </td>
+    </tr>`).join('')
+    : '<tr><td colspan="6" style="color:#aaa">沒有未定義的 Trap</td></tr>';
+
+  const sources = unknown.unknownSources || [];
+  $('unknown-sources-body').innerHTML = sources.length ? sources.map(u => `<tr>
+      <td class="mono">${esc(u.sourceIp)}</td>
+      <td class="mono">${esc(u.lastTrapOid)}</td>
+      <td>${esc(u.count)}</td>
+      <td>${esc(fmtTime(u.lastSeen))}</td>
+      <td>
+        <button class="btn btn-sm btn-primary" onclick="addDeviceFromSource(${jsArg(u.sourceIp)})">新增為設備</button>
+        <button class="btn btn-sm btn-danger"  onclick="deleteUnknown('sources', ${jsArg(u.id)})">刪除</button>
+      </td>
+    </tr>`).join('')
+    : '<tr><td colspan="5" style="color:#aaa">沒有未登錄的來源</td></tr>';
+}
+
+function openMappingDialog(m = null, fromUnknown = null) {
+  $('mapping-dialog-title').textContent = m ? '編輯 Trap 對應' : fromUnknown ? '從未定義 Trap 建立對應' : '新增 Trap 對應';
+  $('m-id').value           = m ? m.id : '';
+  $('m-from-unknown').value = fromUnknown ? fromUnknown.id : '';
+  $('m-metric').value       = m ? m.metricName : '';
+  $('m-triggered').value    = m ? m.triggeredOid : fromUnknown ? fromUnknown.trapOid : '';
+  $('m-resolved').value     = m ? (m.resolvedOid || '') : '';
+  $('m-desc').value         = m ? m.description : '';
+  $('m-enabled').checked    = m ? m.enabled : true;
+  $('m-enabled-row').style.display = m ? '' : 'none';
+  $('mapping-dialog').showModal();
+}
+
+async function saveMapping() {
+  const id = $('m-id').value;
+  const body = { metricName: $('m-metric').value.trim(), triggeredOid: $('m-triggered').value.trim(),
+                 resolvedOid: $('m-resolved').value.trim(), description: $('m-desc').value.trim(),
+                 enabled: $('m-enabled').checked };
+  if (!body.metricName || !body.triggeredOid) { alert('指標名稱與觸發 OID 為必填'); return; }
+  if ($('m-from-unknown').value) body.fromUnknownId = parseInt($('m-from-unknown').value);
+  const res = await fetch(id ? `/api/admin/trap-mappings/${encodeURIComponent(id)}` : '/api/admin/trap-mappings',
+    { method: id ? 'PUT' : 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  if (res.ok) { closeDialog('mapping-dialog'); loadTraps(); }
+  else { const e = await res.json(); alert(e.error || '儲存失敗'); }
+}
+
+async function deleteMapping(id, name) {
+  if (!confirm(`確定刪除對應「${name}」？`)) return;
+  await fetch(`/api/admin/trap-mappings/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  loadTraps();
+}
+
+async function deleteUnknown(kind, id) {
+  if (!confirm('確定刪除這筆記錄？之後若再收到會重新記錄。')) return;
+  await fetch(`/api/admin/unknown-traps/${kind}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  loadTraps();
+}
+
+function addDeviceFromSource(ip) {
+  openDeviceDialog();
+  $('d-host').value = ip;
+  $('d-name').focus();
+  // 儲存後重新整理 Trap 對應分頁（該 IP 會從未登錄來源中移除）
+  $('device-dialog').addEventListener('close', () => {
+    if ($('tab-traps').classList.contains('active')) loadTraps();
+  }, { once: true });
 }
 
 // ─── OID 探索 ────────────────────────────────────────────────

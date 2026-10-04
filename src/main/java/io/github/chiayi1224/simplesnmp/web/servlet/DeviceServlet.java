@@ -105,6 +105,8 @@ public class DeviceServlet extends BaseJsonServlet {
                 if (error != null) { writeError(resp, 400, error); return; }
 
                 store.addDevice(device);
+                // 此 IP 已登錄為設備，不再是未登錄來源
+                store.deleteUnknownSourceByIp(host);
                 trapReceiver.reloadDevices(store.loadEnabledDevices());
                 resp.setStatus(201);
                 writeJson(resp, Map.of("message", "新增成功", "name", dName));

@@ -32,11 +32,11 @@
 
 ## 5. Trap 對應與未定義 Trap（trap-mapping）
 
-- [ ] 5.1 `TrapMappingServlet` 觸發 OID 重複回 409；支援 `fromUnknownId` 建立後刪除未定義記錄；驗證：`TrapMappingServletTest` 涵蓋 201、409（記錄保留）、帶 `fromUnknownId` 的刪除
-- [ ] 5.2 `UnknownTrapServlet` 新增兩個 DELETE 端點，`TrapRepository` 新增對應刪除方法；驗證：`MetricStoreTest` 確認刪除後同 OID 再次寫入從 1 計次
-- [ ] 5.3 `DeviceServlet` 支援 `fromUnknownSourceId`，建立設備後刪除未登錄來源並 reload Trap Receiver；驗證：`DeviceServletTest` 新增案例，`TrapReceiverEndToEndTest` 新增「新增設備後同 IP 的 Trap 以新名稱記錄」
-- [ ] 5.4 `index.html` 新增「Trap 對應」分頁：對應清單 CRUD、未定義 Trap 清單（建立對應、刪除）、未登錄來源清單（新增為設備、刪除）；驗證：Playwright 腳本以本機送出未定義 Trap，從頁面一鍵建立對應後再送一次，確認產生告警
-- [ ] 5.5 `test.sh` 新增 409 與刪除未定義記錄的 API 案例；驗證：`./test.sh --skip-build` 通過
+- [x] 5.1 `TrapMappingServlet` 觸發 OID 重複回 409；支援 `fromUnknownId` 建立後刪除未定義記錄；驗證：`TrapMappingServletTest` 涵蓋 201、409（記錄保留）、帶 `fromUnknownId` 的刪除
+- [x] 5.2 `UnknownTrapServlet` 新增兩個 DELETE 端點，`TrapRepository` 新增對應刪除方法；驗證：`MetricStoreTest` 確認刪除後同 OID 再次寫入從 1 計次
+- [x] 5.3 `DeviceServlet` 建立設備後刪除來源 IP 等於該設備 host 的未登錄來源並 reload Trap Receiver（見 design D7）；驗證：`DeviceServletTest` 新增案例，`TrapReceiverEndToEndTest` 新增「新增設備後同 IP 的 Trap 以新名稱記錄」
+- [x] 5.4 `index.html` 新增「Trap 對應」分頁：對應清單 CRUD、未定義 Trap 清單（建立對應、刪除）、未登錄來源清單（新增為設備、刪除）；驗證：Playwright 腳本以本機送出未定義 Trap，從頁面一鍵建立對應後再送一次，確認產生告警
+- [x] 5.5 `test.sh` 新增 409 與刪除未定義記錄的 API 案例；驗證：`./test.sh --skip-build` 通過
 
 ## 6. 整合檢查
 

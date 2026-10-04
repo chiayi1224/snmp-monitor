@@ -26,6 +26,9 @@ import java.util.Map;
  *   "enabled":      true
  * }
  *
+ * POST 可另帶 "fromUnknownId"：建立成功後刪除該筆未定義 Trap 記錄。
+ * 觸發 OID 已被其他對應使用時回 409。
+ *
  * 每次增修刪後呼叫 TrapReceiver.reloadMappings() 立即生效，無需重啟。
  */
 public class TrapMappingServlet extends BaseJsonServlet {
@@ -57,8 +60,14 @@ public class TrapMappingServlet extends BaseJsonServlet {
             String triggeredOid = requireText(body, "triggeredOid", resp); if (triggeredOid == null) return;
             String resolvedOid  = optText(body, "resolvedOid",  null);
             String description  = optText(body, "description",  "");
+            long   fromUnknownId = optLong(body, "fromUnknownId", -1);
 
+            if (store.trapTriggeredOidExists(triggeredOid, -1)) {
+                writeError(resp, 409, "觸發 OID 已有對應：" + triggeredOid);
+                return;
+            }
             store.addTrapMapping(metricName, triggeredOid, resolvedOid, description);
+            if (fromUnknownId > 0) store.deleteUnknownTrap(fromUnknownId);
             trapReceiver.reloadMappings(store.loadTrapMappings());
             resp.setStatus(201);
             writeJson(resp, Map.of("message", "新增成功", "metricName", metricName));
@@ -82,6 +91,10 @@ public class TrapMappingServlet extends BaseJsonServlet {
             String description  = optText(body, "description",  "");
             boolean enabled     = optBool(body, "enabled", true);
 
+            if (store.trapTriggeredOidExists(triggeredOid, id)) {
+                writeError(resp, 409, "觸發 OID 已有對應：" + triggeredOid);
+                return;
+            }
             store.updateTrapMapping(id, metricName, triggeredOid, resolvedOid, description, enabled);
             trapReceiver.reloadMappings(store.loadTrapMappings());
             writeJson(resp, Map.of("message", "更新成功", "id", id));

@@ -310,6 +310,9 @@ assert_status "更新 Trap 對應" 200
 call POST /api/admin/trap-mappings -d '{"metricName":"","triggeredOid":"1.3.6.1.4.1.9999.5.1"}'
 assert_status "metricName 空白回 400" 400
 
+call POST /api/admin/trap-mappings -d '{"metricName":"dup","triggeredOid":"1.3.6.1.4.1.9999.4.1"}'
+assert_status "觸發 OID 重複回 409" 409
+
 call DELETE "/api/admin/trap-mappings/${TRAP_ID}"
 assert_status "刪除 Trap 對應" 200
 
@@ -320,6 +323,20 @@ assert_not_contains "刪除後 temperature 消失" "temperature"
 call POST /api/admin/trap-mappings \
   -d '{"metricName":"link-down","triggeredOid":"1.3.6.1.6.3.1.1.5.3","description":"連線中斷（無 resolved）"}'
 assert_status "新增無 resolvedOid 的對應" 201
+
+# 未定義 Trap / 未登錄來源的刪除
+call DELETE /api/admin/unknown-traps/oids/999999
+assert_status "刪除不存在的未定義 Trap 回 404" 404
+
+call DELETE /api/admin/unknown-traps/sources/999999
+assert_status "刪除不存在的未登錄來源回 404" 404
+
+call DELETE /api/admin/unknown-traps/other/1
+assert_status "未知的刪除路徑回 404" 404
+
+call GET /api/admin/unknown-traps
+assert_status "列出未定義 Trap" 200
+assert_contains "回應含 unknownOids" "unknownOids"
 
 # ═════════════════════════════════════════════════════════════════
 section "8. 系統設定 API"

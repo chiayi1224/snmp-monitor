@@ -113,6 +113,7 @@ class DeviceServletTest {
         assertEquals(DeviceConfig.SnmpVersion.V2C, d.getSnmpVersion());
         verify(trapReceiver).reloadDevices(any());
         verify(resp).setStatus(201);
+        verify(store).deleteUnknownSourceByIp("192.168.1.10");
     }
 
     @Test
