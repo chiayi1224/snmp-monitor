@@ -13,8 +13,8 @@
 - [x] 2.4 `DeviceServlet` 接受新欄位，不合法時回 400；驗證：`DeviceServletTest` 新增版本不合法、priv 無 auth、密碼過短三個 400 案例
 - [x] 2.5 新增 `snmp.SnmpSession`（自有 `SecurityProtocols`／`USM`、`targetFor()` 依版本建立 target、v3 依 engine ID 本地化使用者並快取、`get()`、`walk()`）；驗證：新增 `SnmpSessionEndToEndTest`，在本機以 SNMP4J 扮演 v1／v2c／v3 agent，GET 與 walk 皆成功，且兩台同 username 不同密碼的 v3 agent 可同時查詢
 - [x] 2.6 `SnmpPoller` 改用 `SnmpSession`；v3 認證失敗時清除 engine ID 快取並標記 `SNMP_ERROR`；驗證：既有測試與 `./test.sh --skip-build` 全數通過（v2c 無回歸），並新增 Poller 對 v3 本機 agent 的輪詢測試
-- [ ] 2.7 設備對話框（`index.html`）依版本切換 community／v3 欄位，密碼欄位留空代表不變更；驗證：以 Playwright 腳本新增一台 v3 設備並重新開啟對話框，確認密碼欄位為空且顯示「已設定」
-- [ ] 2.8 更新 `CLAUDE.md` 架構段落（`SnmpSession` 與 v3 本地化說明）與 `test.sh`（新增 v3 設備 API 案例）；驗證：`./test.sh --skip-build` 通過
+- [x] 2.7 設備對話框（`index.html`）依版本切換 community／v3 欄位，密碼欄位留空代表不變更；驗證：以 Playwright 腳本新增一台 v3 設備並重新開啟對話框，確認密碼欄位為空且顯示「已設定」
+- [x] 2.8 更新 `CLAUDE.md` 架構段落（`SnmpSession` 與 v3 本地化說明）與 `test.sh`（新增 v3 設備 API 案例）；驗證：`./test.sh --skip-build` 通過
 
 ## 3. 掃描服務（device-discovery 後端）
 

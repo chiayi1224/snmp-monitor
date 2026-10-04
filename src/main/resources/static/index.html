@@ -37,6 +37,7 @@
   .dialog-body { padding: 20px; display: flex; flex-direction: column; gap: 12px; }
   .dialog-footer { padding: 12px 20px; text-align: right; border-top: 1px solid #eee; display: flex; gap: 8px; justify-content: flex-end; }
   label { font-size: .85rem; color: #555; }
+  .hint { color: #2e7d32; font-size: .75rem; }
   input[type=text], input[type=password], input[type=number], select { width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: .9rem; margin-top: 4px; }
   .toggle { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
   .pct-bar { display: inline-block; width: 80px; height: 8px; background: #eee; border-radius: 4px; vertical-align: middle; margin-right: 6px; overflow: hidden; }
@@ -82,7 +83,7 @@
     </div>
     <h2>設備清單</h2>
     <table>
-      <thead><tr><th>名稱</th><th>IP / Host</th><th>Port</th><th>Community</th><th>狀態</th><th>操作</th></tr></thead>
+      <thead><tr><th>名稱</th><th>IP / Host</th><th>Port</th><th>SNMP</th><th>狀態</th><th>操作</th></tr></thead>
       <tbody id="devices-body"><tr><td colspan="6" style="color:#aaa">載入中...</td></tr></tbody>
     </table>
   </section>
@@ -150,8 +151,37 @@
     <input type="hidden" id="d-id">
     <label>設備名稱 * <input type="text" id="d-name" placeholder="Server-01"></label>
     <label>IP / Hostname * <input type="text" id="d-host" placeholder="192.168.1.10"></label>
+    <input type="hidden" id="d-retries"><input type="hidden" id="d-timeout">
     <label>SNMP Port <input type="number" id="d-port" value="161" min="1" max="65535"></label>
-    <label>Community String <input type="text" id="d-community" value="public"></label>
+    <label>SNMP 版本
+      <select id="d-version" onchange="toggleV3Fields()">
+        <option value="1">v1</option><option value="2c" selected>v2c</option><option value="3">v3</option>
+      </select>
+    </label>
+    <label id="d-community-row">Community String <input type="text" id="d-community" value="public"></label>
+    <div id="d-v3-fields" style="display:none">
+      <label>v3 使用者名稱 * <input type="text" id="d-v3-user" autocomplete="off"></label>
+      <label>認證協定
+        <select id="d-v3-auth-proto">
+          <option>MD5</option><option selected>SHA</option><option>SHA224</option>
+          <option>SHA256</option><option>SHA384</option><option>SHA512</option>
+        </select>
+      </label>
+      <label>認證密碼 <span class="hint" id="d-v3-auth-hint"></span>
+        <input type="password" id="d-v3-auth-pass" autocomplete="new-password" placeholder="至少 8 字元">
+      </label>
+      <label>加密協定
+        <select id="d-v3-priv-proto">
+          <option>DES</option><option selected>AES128</option><option>AES192</option><option>AES256</option>
+        </select>
+      </label>
+      <label>加密密碼 <span class="hint" id="d-v3-priv-hint"></span>
+        <input type="password" id="d-v3-priv-pass" autocomplete="new-password" placeholder="至少 8 字元">
+      </label>
+      <label id="d-v3-clear-row" style="display:none">
+        <div class="toggle"><input type="checkbox" id="d-v3-clear-priv"><span>清除加密密碼（改為 authNoPriv）</span></div>
+      </label>
+    </div>
     <label><div class="toggle"><input type="checkbox" id="d-enabled" checked><span>啟用監控</span></div></label>
   </div>
   <div class="dialog-footer">
@@ -296,7 +326,9 @@ async function loadDevices() {
   if (!data.length) { tb.innerHTML = '<tr><td colspan="6" style="color:#aaa">尚無設備</td></tr>'; return; }
   tb.innerHTML = data.map(d => `<tr>
     <td><strong>${esc(d.name)}</strong></td><td>${esc(d.host)}</td><td>${esc(d.port)}</td>
-    <td><code>${esc(d.community)}</code></td>
+    <td>v${esc(d.snmpVersion || '2c')} ${d.snmpVersion === '3'
+          ? `<code>${esc(d.v3User)}</code>`
+          : `<code>${esc(d.community)}</code>`}</td>
     <td><span class="badge ${d.enabled ? 'ok' : 'off'}">${d.enabled ? '啟用' : '停用'}</span></td>
     <td>
       <button class="btn btn-sm btn-primary" onclick="openDeviceDialog(${jsArg(d)})">編輯</button>
@@ -312,18 +344,50 @@ function openDeviceDialog(d = null) {
   $('d-name').disabled   = !!d;                // 編輯時名稱不可更改
   $('d-host').value      = d ? d.host : '';
   $('d-port').value      = d ? d.port : 161;
+  $('d-retries').value   = d ? d.retries : 2;
+  $('d-timeout').value   = d ? d.timeoutMs : 3000;
   $('d-community').value = d ? d.community : 'public';
   $('d-enabled').checked = d ? d.enabled : true;
+  $('d-version').value         = d ? (d.snmpVersion || '2c') : '2c';
+  $('d-v3-user').value         = d ? (d.v3User || '') : '';
+  $('d-v3-auth-proto').value   = d && d.v3AuthProtocol ? d.v3AuthProtocol : 'SHA';
+  $('d-v3-priv-proto').value   = d && d.v3PrivProtocol ? d.v3PrivProtocol : 'AES128';
+  // 密碼一律不回填；編輯時留空代表沿用原密碼
+  $('d-v3-auth-pass').value    = '';
+  $('d-v3-priv-pass').value    = '';
+  $('d-v3-clear-priv').checked = false;
+  $('d-v3-auth-hint').textContent = d && d.v3AuthConfigured ? '（已設定，留空不變更）' : '';
+  $('d-v3-priv-hint').textContent = d && d.v3PrivConfigured ? '（已設定，留空不變更）' : '';
+  $('d-v3-clear-row').style.display = d && d.v3PrivConfigured ? '' : 'none';
+  toggleV3Fields();
   $('device-dialog').showModal();
+}
+
+function toggleV3Fields() {
+  const v3 = $('d-version').value === '3';
+  $('d-v3-fields').style.display      = v3 ? '' : 'none';
+  $('d-community-row').style.display  = v3 ? 'none' : '';
 }
 
 async function saveDevice() {
   const origName = $('d-id').value;
   const body = { name: $('d-name').value.trim(), host: $('d-host').value.trim(),
                  port: parseInt($('d-port').value), community: $('d-community').value.trim(),
-                 enabled: $('d-enabled').checked };
+                 retries: parseInt($('d-retries').value), timeoutMs: parseInt($('d-timeout').value),
+                 enabled: $('d-enabled').checked, snmpVersion: $('d-version').value };
   if (!body.name || !body.host) { alert('名稱和 IP 為必填'); return; }
-  // 新增：POST /api/devices；更新：POST /api/devices/{name}
+  if (body.snmpVersion === '3') {
+    body.v3User         = $('d-v3-user').value.trim();
+    body.v3AuthProtocol = $('d-v3-auth-proto').value;
+    body.v3PrivProtocol = $('d-v3-priv-proto').value;
+    if (!body.v3User) { alert('SNMPv3 使用者名稱為必填'); return; }
+    // 新增時空白代表不設定；編輯時空白代表沿用（不送出欄位）
+    const authPass = $('d-v3-auth-pass').value, privPass = $('d-v3-priv-pass').value;
+    if (authPass || !origName) body.v3AuthPassword = authPass;
+    if (privPass || !origName) body.v3PrivPassword = privPass;
+    if ($('d-v3-clear-priv').checked) body.v3PrivPassword = '';
+  }
+  // 新增：POST /api/admin/devices；更新：POST /api/admin/devices/{name}
   const url = origName ? `/api/admin/devices/${encodeURIComponent(origName)}` : '/api/admin/devices';
   const res = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
   if (res.ok) { closeDialog('device-dialog'); loadDevices(); }

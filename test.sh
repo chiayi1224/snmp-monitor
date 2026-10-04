@@ -254,6 +254,34 @@ assert_contains "更新後 host 為 10.0.0.1" "10.0.0.1"
 call POST "/api/admin/devices/NoSuchDevice" -d '{"action":"delete"}'
 assert_status "刪除不存在設備回 200（SQLite 刪除不報錯）" 200
 
+# ── SNMP 版本與 v3 ────────────────────────────────────────────────
+call POST /api/admin/devices -d '{"name":"Core-V3","host":"192.168.1.50","snmpVersion":"3","v3User":"monitor","v3AuthProtocol":"SHA256","v3AuthPassword":"authPass123","v3PrivProtocol":"AES256","v3PrivPassword":"privPass123"}'
+assert_status "新增 v3 設備" 201
+
+call POST /api/v1/devices/Core-V3 -d '{}'
+assert_contains "v3 設備版本為 3" '"snmpVersion" : "3"'
+assert_contains "v3 認證已設定" '"v3AuthConfigured" : true'
+assert_not_contains "回應不含認證密碼" "authPass123"
+assert_not_contains "回應不含加密密碼" "privPass123"
+
+call POST "/api/admin/devices/Core-V3" -d '{"host":"192.168.1.51"}'
+assert_status "更新 v3 設備（不帶密碼）" 200
+call POST /api/v1/devices/Core-V3 -d '{}'
+assert_contains "未帶密碼時沿用原密碼" '"v3PrivConfigured" : true'
+assert_contains "未帶版本時沿用 v3" '"snmpVersion" : "3"'
+
+call POST /api/admin/devices -d '{"name":"Bad-Ver","host":"192.168.1.60","snmpVersion":"4"}'
+assert_status "SNMP 版本不合法回 400" 400
+
+call POST /api/admin/devices -d '{"name":"Bad-V3","host":"192.168.1.61","snmpVersion":"3","v3User":"u","v3PrivPassword":"privPass123"}'
+assert_status "v3 只有加密沒有認證回 400" 400
+
+call POST /api/admin/devices -d '{"name":"Bad-V3","host":"192.168.1.61","snmpVersion":"3","v3User":"u","v3AuthPassword":"short"}'
+assert_status "v3 密碼少於 8 字元回 400" 400
+
+call POST "/api/admin/devices/Core-V3" -d '{"action":"delete"}'
+assert_status "刪除 v3 設備" 200
+
 # ═════════════════════════════════════════════════════════════════
 section "7. Trap OID 對應管理 API"
 # ═════════════════════════════════════════════════════════════════

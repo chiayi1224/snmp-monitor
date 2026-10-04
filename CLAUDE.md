@@ -54,6 +54,9 @@ JettyServer (8080) ◄───────────────────�
 
 1. `SnmpMonitor`（main）依序初始化 `MetricStore` → `SnmpPoller` → `TrapReceiver` → `JettyServer`，並掛載 shutdown hook。
 2. `SnmpPoller` 每次 poll 前都重新從 DB 讀取設備清單，因此新增/修改設備無需重啟即生效。
+   - 每台設備可設定 SNMP 版本（`1`／`2c`／`3`）與 v3 認證；舊設備預設 `2c`。設備 API 不回傳 v3 密碼，更新時未帶密碼即沿用舊值。
+   - 所有對設備的查詢都透過 `snmp.SnmpSession`（`get()`、`walk()`）：使用自己的 `USM`／`SecurityProtocols`，v3 使用者依設備 engine ID 本地化後加入 USM（同名使用者不同密碼不會互相覆蓋），只發出 GET／GETNEXT／GETBULK。
+   - 測試可用 `src/test/.../snmp/TestSnmpAgent`（記憶體內的 v1/v2c/v3 agent）做端對端驗證，不需要外部設備。
 3. `ThresholdEngine` 使用狀態機（`ThresholdState`）與 hysteresis 防止告警抖動：CPU/記憶體需連續 3 次超標才觸發，磁碟需 2 次；恢復需連續 2 次低於 rearm 值。
 4. `TrapReceiver` 依來源 IP 查找設備名稱（啟動時建立 IP→name 對應表），trap OID 透過 `TrapOidMapping` 轉換為告警類型。
    - 同一個 port 同時接收 v1 / v2c / v3 與 INFORM；v1 依 RFC 3584 轉成 v2 格式，INFORM 會回覆 RESPONSE。
