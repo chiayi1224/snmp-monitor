@@ -77,12 +77,12 @@ final class DeviceRepository {
         db.update("""
             INSERT INTO devices(name, host, port, community, retries, timeout_ms,
                                 snmp_version, v3_user, v3_auth_protocol, v3_auth_password,
-                                v3_priv_protocol, v3_priv_password, enabled, created, updated)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)
+                                v3_priv_protocol, v3_priv_password, profile_id, enabled, created, updated)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)
             """,
             d.getName(), d.getHost(), d.getPort(), d.getCommunity(), d.getRetries(), d.getTimeoutMs(),
             d.getSnmpVersion().label(), nz(d.getV3User()), d.getV3AuthProtocol().name(), nz(d.getV3AuthPassword()),
-            d.getV3PrivProtocol().name(), nz(d.getV3PrivPassword()), now, now);
+            d.getV3PrivProtocol().name(), nz(d.getV3PrivPassword()), d.getProfileId(), now, now);
     }
 
     /** 依名稱更新設備；v3 密碼為 null 時沿用資料庫中的舊值 */
@@ -93,13 +93,34 @@ final class DeviceRepository {
                    v3_auth_password=COALESCE(?, v3_auth_password),
                    v3_priv_protocol=?,
                    v3_priv_password=COALESCE(?, v3_priv_password),
+                   profile_id=?,
                    updated=?
             WHERE name=?
             """,
             d.getHost(), d.getPort(), d.getCommunity(), Db.flag(enabled), d.getRetries(), d.getTimeoutMs(),
             d.getSnmpVersion().label(), nz(d.getV3User()), d.getV3AuthProtocol().name(),
             d.getV3AuthPassword(), d.getV3PrivProtocol().name(), d.getV3PrivPassword(),
-            Db.now(), d.getName());
+            d.getProfileId(), Db.now(), d.getName());
+    }
+
+    /** 輪詢時更新設備的 sysObjectID（未變動時不寫入） */
+    void updateSysObjectId(String name, String sysObjectId) {
+        try {
+            db.update("UPDATE devices SET sys_object_id=? WHERE name=? AND sys_object_id != ?",
+                sysObjectId, name, sysObjectId);
+        } catch (SQLException ex) {
+            log.error("updateSysObjectId 失敗: {}", ex.getMessage());
+        }
+    }
+
+    /** 範本被刪除時，原本手動指定該範本的設備改回自動套用 */
+    void clearProfile(long profileId) throws SQLException {
+        db.update("UPDATE devices SET profile_id=NULL WHERE profile_id=?", profileId);
+    }
+
+    private static Long nullableLong(ResultSet rs, String column) throws SQLException {
+        long v = rs.getLong(column);
+        return rs.wasNull() ? null : v;
     }
 
     private static String nz(String s) {
@@ -159,6 +180,8 @@ final class DeviceRepository {
         // 不回傳密碼，只回傳是否已設定
         row.put("v3AuthConfigured", !rs.getString("v3_auth_password").isEmpty());
         row.put("v3PrivConfigured", !rs.getString("v3_priv_password").isEmpty());
+        row.put("profileId",        nullableLong(rs, "profile_id"));
+        row.put("sysObjectId",      rs.getString("sys_object_id"));
         row.put("status",    rs.getString("status"));
         row.put("lastSeen",  rs.getString("last_seen"));
         row.put("created",   rs.getString("created"));
@@ -178,6 +201,8 @@ final class DeviceRepository {
             .v3AuthPassword(rs.getString("v3_auth_password"))
             .v3PrivProtocol(V3UserConfig.PrivProtocol.parse(rs.getString("v3_priv_protocol")))
             .v3PrivPassword(rs.getString("v3_priv_password"))
+            .profileId(nullableLong(rs, "profile_id"))
+            .sysObjectId(rs.getString("sys_object_id"))
             .build();
     }
 

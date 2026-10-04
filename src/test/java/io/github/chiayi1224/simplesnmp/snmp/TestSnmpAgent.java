@@ -110,8 +110,18 @@ public class TestSnmpAgent implements CommandResponder, Closeable {
 
         switch (request.getType()) {
             case PDU.GET -> {
+                boolean v1 = event.getMessageProcessingModel() == MessageProcessingModel.MPv1;
                 for (VariableBinding vb : request.getVariableBindings()) {
                     Variable v = mib.get(vb.getOid());
+                    if (v == null && v1) {
+                        // v1 沒有 noSuchObject：整個請求回 noSuchName，errorIndex 指向第一個不存在的 OID
+                        response.clear();
+                        response.setRequestID(request.getRequestID());
+                        response.setErrorStatus(PDU.noSuchName);
+                        response.setErrorIndex(request.getVariableBindings().indexOf(vb) + 1);
+                        response.addAll(request.getVariableBindings());
+                        break;
+                    }
                     response.add(new VariableBinding(vb.getOid(), v != null ? v : Null.noSuchObject));
                 }
             }

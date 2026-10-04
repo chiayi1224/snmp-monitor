@@ -4,6 +4,11 @@ import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.config.OidConstants;
 import io.github.chiayi1224.simplesnmp.model.DeviceStatus;
 import io.github.chiayi1224.simplesnmp.model.DiskInfo;
+import io.github.chiayi1224.simplesnmp.profile.MetricProfile;
+import io.github.chiayi1224.simplesnmp.profile.MetricValue;
+import io.github.chiayi1224.simplesnmp.profile.ProfileCollector;
+import io.github.chiayi1224.simplesnmp.profile.ProfileMetric;
+import io.github.chiayi1224.simplesnmp.profile.ProfileResolver;
 import io.github.chiayi1224.simplesnmp.snmp.SnmpException;
 import io.github.chiayi1224.simplesnmp.snmp.SnmpSession;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
@@ -15,16 +20,21 @@ import org.snmp4j.smi.Variable;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 定時 SNMP Poller（CPU / Memory / Disk）
+ * 定時 SNMP Poller：依每台設備套用的監控範本收集指標
  *
- * 每次 poll 前從 DB 重新讀取設備清單（loadEnabledDevices），
- * 所以在 Web 新增/修改/停用設備後，下一個 poll 週期立即生效，
- * 不需要重啟程式。
+ * 每次 poll 前從 DB 重新讀取設備清單與範本，所以在 Web 新增/修改設備或範本後，
+ * 下一個 poll 週期立即生效，不需要重啟程式。
+ *
+ * 每台設備的流程（Ping → GET／WALK 與計算由 {@link ProfileCollector} 負責 → 儲存與評估）：
+ *  1. 範本所需的 OID 與 sysObjectID 合併成一次 GET；sysObjectID 改變時同一週期內改用新範本
+ *  2. cpu／memory／disk 寫入既有資料表並走既有閾值，其他指標寫入 custom_metrics
+ *  3. 單一指標計算失敗只記警告（每台設備每個指標每小時最多一次），不影響其他指標與設備狀態
  */
 public class SnmpPoller {
 
@@ -34,10 +44,14 @@ public class SnmpPoller {
     private final long            intervalSeconds;
     private final ThresholdEngine thresholdEngine;
 
-    /** hrStorage 表格最多讀取的筆數（每列 5 個欄位） */
-    private static final int STORAGE_MAX_ROWS = 5_000;
+    /** 指標失敗警告的最短間隔 */
+    private static final long WARN_INTERVAL_MS = TimeUnit.HOURS.toMillis(1);
 
-    private SnmpSession session;
+    /** 設備::指標 → 上次記錄失敗警告的時間 */
+    private final Map<String, Long> failureLoggedAt = new ConcurrentHashMap<>();
+
+    private SnmpSession      session;
+    private ProfileCollector collector;
     private ScheduledExecutorService scheduler;
 
     public SnmpPoller(MetricStore store, long intervalSeconds) {
@@ -50,12 +64,16 @@ public class SnmpPoller {
         this.intervalSeconds = intervalSeconds;
         this.thresholdEngine = new ThresholdEngine(store);
         this.session         = session;
+        this.collector       = session == null ? null : new ProfileCollector(session);
     }
 
     // ─── 啟動 / 停止 ─────────────────────────────────────────────
 
     public void start() throws IOException {
-        if (session == null) session = new SnmpSession();
+        if (session == null) {
+            session   = new SnmpSession();
+            collector = new ProfileCollector(session);
+        }
 
         scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "snmp-poller");
@@ -77,32 +95,30 @@ public class SnmpPoller {
 
     /** 執行一輪輪詢（排程呼叫；測試可直接呼叫） */
     void pollAll() {
-        // 每次 poll 前從 DB 重新讀取設備清單與 OID 設定，立即反映 Web 的設定異動
-        List<DeviceConfig> devices    = store.loadEnabledDevices();
-        List<String>       scalarOids = store.loadEnabledScalarOids();
-        boolean            diskEnabled = store.isDiskPollEnabled();
-
+        // 每次 poll 前從 DB 重新讀取設備清單與範本，立即反映 Web 的設定異動
+        List<DeviceConfig> devices = store.loadEnabledDevices();
         if (devices.isEmpty()) {
             log.debug("沒有啟用的設備，略過此次 poll");
             return;
         }
+        ProfileResolver resolver = new ProfileResolver(store.loadProfiles());
 
         boolean pingEnabled  = store.getSettingBool("ping_enabled", true);
         int     pingTimeout  = store.getSettingInt("ping_timeout_ms", 1000);
 
-        log.debug("開始 poll，共 {} 台設備，scalar OID {} 個，disk={}，ping={}", devices.size(), scalarOids.size(), diskEnabled, pingEnabled);
+        log.debug("開始 poll，共 {} 台設備，ping={}", devices.size(), pingEnabled);
 
         for (DeviceConfig device : devices) {
             try {
-                pollDevice(device, scalarOids, diskEnabled, pingEnabled, pingTimeout);
+                pollDevice(device, resolver, pingEnabled, pingTimeout);
             } catch (Exception e) {
                 log.error("[{}] poll 失敗: {}", device.getName(), e.getMessage());
             }
         }
     }
 
-    private void pollDevice(DeviceConfig device, List<String> scalarOids, boolean diskEnabled,
-                             boolean pingEnabled, int pingTimeoutMs) throws IOException {
+    private void pollDevice(DeviceConfig device, ProfileResolver resolver,
+                            boolean pingEnabled, int pingTimeoutMs) throws IOException {
         String name = device.getName();
 
         // ── 第一層：Ping 確認主機可達 ─────────────────────────────
@@ -115,45 +131,94 @@ public class SnmpPoller {
             log.debug("[{}] Ping 成功", name);
         }
 
-        // ── 第二層：SNMP GET（CPU + Memory）與 WALK（Disk）────────
-        // 設備無回應、v3 認證失敗等 → SNMP_ERROR（SnmpSession 會清除 v3 engine ID 快取）
+        // ── 第二層：依範本 GET 與 WALK ────────────────────────────
+        // GET 無回應、v3 認證失敗等 → SNMP_ERROR（SnmpSession 會清除 v3 engine ID 快取）
+        MetricProfile profile = resolver.resolve(device.getProfileId(), device.getSysObjectId());
+        ProfileCollector.Fetched fetched;
         try {
-            Map<String, String> scalars = getScalars(device, scalarOids);
-            recordCpu(name, scalars);
-            recordMemory(name, scalars);
-            if (diskEnabled) recordDisks(device);
+            ProfileCollector.Scalars scalars = collector.get(device, profile, List.of(OidConstants.SYS_OBJECT_ID));
+
+            // sysObjectID 改變（含首次取得）：保存並在同一週期改用新範本
+            Variable sysOid = scalars.values().get(OidConstants.SYS_OBJECT_ID);
+            String sysObjectId = SnmpSession.isMissing(sysOid) ? "" : sysOid.toString();
+            if (!sysObjectId.isEmpty() && !sysObjectId.equals(device.getSysObjectId())) {
+                store.updateDeviceSysObjectId(name, sysObjectId);
+                MetricProfile resolved = resolver.resolve(device.getProfileId(), sysObjectId);
+                if (!Objects.equals(resolved.id(), profile.id())) {
+                    log.info("[{}] sysObjectID={}，套用監控範本「{}」", name, sysObjectId, resolved.name());
+                    profile = resolved;
+                }
+            }
+            // 範本確定後才補查缺少的 OID 並走訪表格
+            fetched = collector.complete(device, profile, scalars);
         } catch (SnmpException e) {
             log.warn("[{}] SNMP 查詢失敗，標記 SNMP_ERROR：{}", name, e.getMessage());
             updateStatus(name, DeviceStatus.SNMP_ERROR);
             return;
         }
 
+        // ── 第三層：逐指標儲存與評估 ─────────────────────────────
+        for (ProfileCollector.MetricResult r : ProfileCollector.calculate(profile, fetched)) {
+            String key = r.metric().metricKey();
+            if (r.ok()) {
+                record(name, r.metric(), r.values());
+                failureLoggedAt.remove(name + "::" + key);
+            } else {
+                warnLimited(name, key, r.error());
+            }
+        }
+
         // Ping + SNMP 均正常
         updateStatus(name, DeviceStatus.ONLINE);
     }
 
-    private void recordCpu(String name, Map<String, String> scalars) {
-        Double cpuUsed = PollParser.cpuUsedPct(scalars);
-        if (cpuUsed == null) return;
-        store.saveCpu(name, cpuUsed);
-        thresholdEngine.evaluateCpu(name, cpuUsed);
-        log.info("[{}] CPU {}%", name, String.format("%.1f", cpuUsed));
+    /** 依指標名稱分派：cpu／memory／disk 寫既有資料表，其他寫 custom_metrics */
+    private void record(String name, ProfileMetric metric, List<MetricValue> values) {
+        switch (metric.metricKey()) {
+            case ProfileMetric.CPU -> {
+                double pct = values.get(0).value();
+                store.saveCpu(name, pct);
+                thresholdEngine.evaluateCpu(name, pct);
+                log.info("[{}] CPU {}%", name, String.format("%.1f", pct));
+            }
+            case ProfileMetric.MEMORY -> {
+                MetricValue v = values.get(0);
+                long totalKb = v.totalBytes() == null ? 0 : v.totalBytes() / 1024;
+                long usedKb  = v.usedBytes()  == null ? 0 : v.usedBytes()  / 1024;
+                store.saveMemory(name, v.value(), totalKb, usedKb);
+                thresholdEngine.evaluateMemory(name, v.value());
+                log.info("[{}] Memory {}%", name, String.format("%.1f", v.value()));
+            }
+            case ProfileMetric.DISK -> {
+                List<DiskInfo> disks = new ArrayList<>();
+                for (MetricValue v : values) {
+                    disks.add(new DiskInfo(v.instance() == null ? "unknown" : v.instance(),
+                        v.totalBytes() == null ? 0 : v.totalBytes(), v.usedBytes() == null ? 0 : v.usedBytes()));
+                }
+                store.saveDisk(name, disks);
+                thresholdEngine.evaluateDisks(name, disks);
+                for (DiskInfo d : disks) log.info("[{}] Disk {}", name, d);
+            }
+            default -> {
+                double value = values.get(0).value();
+                store.saveCustomMetric(name, metric.metricKey(), value, metric.unit());
+                thresholdEngine.evaluate(name, metric.metricKey(), value);
+                log.info("[{}] {} {}{}", name, metric.metricKey(), String.format("%.2f", value), metric.unit());
+            }
+        }
     }
 
-    private void recordMemory(String name, Map<String, String> scalars) {
-        PollParser.Memory mem = PollParser.memory(scalars);
-        if (mem == null) return;
-        store.saveMemory(name, mem.usedPct(), mem.totalKb(), mem.usedKb());
-        thresholdEngine.evaluateMemory(name, mem.usedPct());
-        log.info("[{}] Memory {}%", name, String.format("%.1f", mem.usedPct()));
-    }
-
-    private void recordDisks(DeviceConfig device) throws IOException {
-        String name = device.getName();
-        List<DiskInfo> disks = getDiskInfo(device);
-        store.saveDisk(name, disks);
-        thresholdEngine.evaluateDisks(name, disks);
-        for (DiskInfo d : disks) log.info("[{}] Disk {}", name, d);
+    /** 同一設備同一指標的失敗警告每小時最多記錄一次，其餘降為 debug */
+    private void warnLimited(String device, String metricKey, String reason) {
+        String key = device + "::" + metricKey;
+        long now = System.currentTimeMillis();
+        Long last = failureLoggedAt.get(key);
+        if (last == null || now - last >= WARN_INTERVAL_MS) {
+            failureLoggedAt.put(key, now);
+            log.warn("[{}] 指標 {} 本週期無數值：{}（同一指標每小時最多記錄一次）", device, metricKey, reason);
+        } else {
+            log.debug("[{}] 指標 {} 本週期無數值：{}", device, metricKey, reason);
+        }
     }
 
     private void updateStatus(String name, DeviceStatus status) {
@@ -173,24 +238,5 @@ public class SnmpPoller {
             log.debug("isReachable 例外 host={}: {}", host, e.getMessage());
             return false;
         }
-    }
-
-    // ─── GET ──────────────────────────────────────────────────────
-
-    /** GET 指定 OID，回傳 OID → 值字串；設備不支援的 OID 不會出現在結果中 */
-    private Map<String, String> getScalars(DeviceConfig device, List<String> oids) throws IOException {
-        Map<String, String> result = new LinkedHashMap<>();
-        for (Map.Entry<String, Variable> e : session.get(device, oids).entrySet()) {
-            result.put(e.getKey(), e.getValue().toString());
-        }
-        return result;
-    }
-
-    // ─── WALK ─────────────────────────────────────────────────────
-
-    private List<DiskInfo> getDiskInfo(DeviceConfig device) throws IOException {
-        SnmpSession.WalkResult walk = session.walk(device, OidConstants.HR_STORAGE_ENTRY, STORAGE_MAX_ROWS, 0);
-        if (walk.error() != null) log.warn("[{}] 磁碟表讀取中斷：{}", device.getName(), walk.error());
-        return PollParser.disks(walk.rows());
     }
 }

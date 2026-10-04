@@ -400,6 +400,32 @@ call PUT "/api/admin/thresholds/${THRESHOLD_ID}" \
   -d '{"threshold":85,"rearm":90,"triggerCount":2,"rearmCount":2}'
 assert_status "rearm >= threshold 回 400" 400
 
+# ── 自訂指標閾值 ──────────────────────────────────────────────────
+call POST /api/admin/thresholds -d '{"metricName":"free_ports","direction":"LOW","threshold":5,"rearm":8,"triggerCount":2,"rearmCount":2,"description":"可用埠數"}'
+assert_status "新增自訂 LOW 閾值" 201
+CUSTOM_THRESHOLD_ID=$(jq_field '.id')
+
+call GET /api/admin/thresholds
+assert_contains "清單含自訂閾值方向 LOW" '"direction" : "LOW"'
+
+call POST /api/admin/thresholds -d '{"metricName":"free_ports","threshold":5,"rearm":8}'
+assert_status "自訂閾值名稱重複回 409" 409
+
+call POST /api/admin/thresholds -d '{"metricName":"cpu","threshold":90,"rearm":80}'
+assert_status "以內建名稱新增回 409" 409
+
+call POST /api/admin/thresholds -d '{"metricName":"temperature","direction":"LOW","threshold":5,"rearm":3}'
+assert_status "LOW 方向 rearm <= threshold 回 400" 400
+
+call PUT "/api/admin/thresholds/${CUSTOM_THRESHOLD_ID}" -d '{"direction":"HIGH","threshold":5000,"rearm":1000,"triggerCount":1,"rearmCount":1}'
+assert_status "自訂閾值可改方向且不限百分比" 200
+
+call DELETE "/api/admin/thresholds/${THRESHOLD_ID}"
+assert_status "刪除內建閾值回 403" 403
+
+call DELETE "/api/admin/thresholds/${CUSTOM_THRESHOLD_ID}"
+assert_status "刪除自訂閾值" 200
+
 # ═════════════════════════════════════════════════════════════════
 section "10. SNMPv3 使用者 API"
 # ═════════════════════════════════════════════════════════════════
@@ -432,52 +458,14 @@ call POST /api/admin/v3-users -d '{"username":"","authPassword":"pass"}'
 assert_status "username 空白回 400" 400
 
 # ═════════════════════════════════════════════════════════════════
-section "11. Poll OID 管理 API"
+section "11. Poll OID 管理 API（已移除，改用監控範本）"
 # ═════════════════════════════════════════════════════════════════
 
 call GET /api/admin/poll-oids
-assert_status "列出 Poll OID" 200
-assert_contains "預設含 cpu 群組" "cpu"
-assert_contains "預設含 memory 群組" "memory"
-assert_contains "預設含 disk 群組" "disk"
-assert_contains "預設含 cpuIdle" "cpuIdle"
+assert_status "GET poll-oids 回 404" 404
 
-POLL_ID=$(jq_field '.[] | select(.name=="cpuIdle") | .id')
-POLL_ID=${POLL_ID:-5}
-log "cpuIdle poll-oid id=$POLL_ID"
-
-# 新增自訂 OID
-call POST /api/admin/poll-oids \
-  -d '{"oid":"1.3.6.1.4.1.9999.1.1","name":"customMetric","description":"自訂指標","groupName":"custom","pollType":"SCALAR"}'
-assert_status "新增自訂 Poll OID" 201
-
-call GET /api/admin/poll-oids
-assert_contains "新增後含 customMetric" "customMetric"
-
-CUSTOM_ID=$(jq_field '.[] | select(.name=="customMetric") | .id')
-CUSTOM_ID=${CUSTOM_ID:-99}
-
-# 停用 OID
-call PUT "/api/admin/poll-oids/${CUSTOM_ID}" \
-  -d '{"oid":"1.3.6.1.4.1.9999.1.1","name":"customMetric","description":"自訂指標（已停用）","groupName":"custom","pollType":"SCALAR","enabled":false}'
-assert_status "停用自訂 Poll OID" 200
-
-call GET /api/admin/poll-oids
-assert_contains "停用後 enabled:false" '"enabled" : false'
-
-# 驗證欄位空值
-call POST /api/admin/poll-oids -d '{"oid":"","name":"test"}'
-assert_status "oid 空白回 400" 400
-
-call POST /api/admin/poll-oids -d '{"oid":"1.3.6.1.4.1.9999.2.1","name":""}'
-assert_status "name 空白回 400" 400
-
-# 刪除自訂 OID
-call DELETE "/api/admin/poll-oids/${CUSTOM_ID}"
-assert_status "刪除自訂 Poll OID" 200
-
-call GET /api/admin/poll-oids
-assert_not_contains "刪除後 customMetric 消失" "customMetric"
+call POST /api/admin/poll-oids -d '{"oid":"1.3.6.1.4.1.9999.1.1","name":"customMetric","groupName":"custom"}'
+assert_status "POST poll-oids 回 404" 404
 
 # ═════════════════════════════════════════════════════════════════
 section "12. 未定義 Trap 查詢 API"
@@ -572,6 +560,59 @@ assert_contains "含 LOGIN_SUCCESS" "LOGIN_SUCCESS"
 
 call POST /api/admin/audit-logs -d '{"eventType":"LOGIN_FAIL","limit":10}'
 assert_status "查詢 LOGIN_FAIL" 200
+
+# ═════════════════════════════════════════════════════════════════
+section "16-0. 監控範本 API"
+# ═════════════════════════════════════════════════════════════════
+
+call GET /api/admin/profiles
+assert_status "列出範本" 200
+assert_contains "含內建 Net-SNMP 範本" "Net-SNMP"
+assert_contains "含內建 Cisco IOS 範本" "Cisco IOS"
+
+call POST /api/admin/profiles -d '{"name":"Switch-X","matchPrefix":"1.3.6.1.4.1.99999.1","metrics":[{"metricKey":"cpu","kind":"VALUE","params":{"oid":"1.3.6.1.4.1.99999.2.1.0"},"unit":"%"},{"metricKey":"temperature","kind":"VALUE","params":{"oid":"1.3.6.1.4.1.99999.3.1.0","scale":"0.1"},"unit":"°C"}]}'
+assert_status "新增範本" 201
+PROFILE_ID=$(jq_field '.id')
+
+call POST /api/admin/profiles -d '{"name":"Switch-X","metrics":[]}'
+assert_status "範本名稱重複回 409" 409
+
+call POST /api/admin/profiles -d '{"name":"Bad","metrics":[{"metricKey":"CPU Temp","kind":"VALUE","params":{"oid":"1.1"}}]}'
+assert_status "指標名稱不合法回 400" 400
+
+call POST /api/admin/profiles -d '{"name":"Bad","metrics":[{"metricKey":"temp","kind":"EXPRESSION"}]}'
+assert_status "不支援的計算類型回 400" 400
+
+BUILTIN_ID=$(curl -s -b "$COOKIE_JAR" "${BASE}/api/admin/profiles" | jq -r '.[] | select(.builtin) | .id' | head -1)
+call PUT "/api/admin/profiles/${BUILTIN_ID}" -d '{"name":"Hack","metrics":[]}'
+assert_status "修改內建範本回 403" 403
+
+call DELETE "/api/admin/profiles/${BUILTIN_ID}"
+assert_status "刪除內建範本回 403" 403
+
+call POST /api/admin/profiles/preview -d "{\"profileId\":${PROFILE_ID}}"
+assert_status "預覽未指定設備回 400" 400
+
+call POST /api/admin/profiles/preview -d "{\"deviceName\":\"NoSuchDevice\",\"profileId\":${PROFILE_ID}}"
+assert_status "預覽不存在的設備回 404" 404
+
+call POST "/api/admin/profiles/${BUILTIN_ID}/copy"
+assert_status "複製內建範本" 201
+assert_contains "複本名稱" "複本"
+
+call POST /api/admin/devices -d "{\"name\":\"Profiled\",\"host\":\"192.168.1.70\",\"profileId\":${PROFILE_ID}}"
+assert_status "新增設備並指定範本" 201
+call POST /api/v1/devices/Profiled -d '{}'
+assert_contains "設備套用指定範本" '"appliedProfileName" : "Switch-X"'
+
+call POST /api/admin/devices -d '{"name":"BadProfile","host":"192.168.1.71","profileId":999999}'
+assert_status "指定不存在的範本回 400" 400
+
+call DELETE "/api/admin/profiles/${PROFILE_ID}"
+assert_status "刪除自訂範本" 200
+call POST /api/v1/devices/Profiled -d '{}'
+assert_contains "範本刪除後設備改回自動（HOST-RESOURCES）" "HOST-RESOURCES"
+call POST "/api/admin/devices/Profiled" -d '{"action":"delete"}'
 
 # ═════════════════════════════════════════════════════════════════
 section "16-1. OID 掃描 API"

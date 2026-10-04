@@ -8,7 +8,14 @@ public class ThresholdConfig {
 
     public enum Direction {
         HIGH,  // 值超過 threshold 才告警（CPU、Memory、Disk）
-        LOW    // 值低於 threshold 才告警（預留，例如剩餘空間）
+        LOW;   // 值低於 threshold 才告警（例如剩餘空間、可用埠數）
+
+        /** 大小寫不敏感解析；null 或空白回傳 HIGH，不合法回傳 null */
+        public static Direction parse(String s) {
+            if (s == null || s.isBlank()) return HIGH;
+            try { return valueOf(s.trim().toUpperCase(java.util.Locale.ROOT)); }
+            catch (IllegalArgumentException e) { return null; }
+        }
     }
 
     private final String   metricName;    // 識別用，例如 "cpu", "memory", "disk:/"
@@ -46,6 +53,17 @@ public class ThresholdConfig {
         return direction == Direction.HIGH
             ? value <= rearmValue
             : value >= rearmValue;
+    }
+
+    /** 合法回傳 null，否則回傳錯誤訊息（恢復值須在觸發值「安全的一側」） */
+    public static String validate(Direction direction, double threshold, double rearm,
+                                  int triggerCount, int rearmCount) {
+        if (direction == null) return "direction 只能是 HIGH 或 LOW";
+        if (!Double.isFinite(threshold) || !Double.isFinite(rearm)) return "threshold 與 rearm 必須是數字";
+        if (direction == Direction.HIGH && rearm >= threshold) return "方向為 HIGH 時 rearm 應小於 threshold";
+        if (direction == Direction.LOW && rearm <= threshold) return "方向為 LOW 時 rearm 應大於 threshold";
+        if (triggerCount < 1 || rearmCount < 1) return "count 至少為 1";
+        return null;
     }
 
     // ─── 常用預設值 ───────────────────────────────────────────────

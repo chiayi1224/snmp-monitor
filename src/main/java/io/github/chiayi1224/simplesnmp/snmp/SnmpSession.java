@@ -78,20 +78,29 @@ public class SnmpSession implements Closeable {
 
     /**
      * SNMP GET。回傳 OID → 值（保留請求順序）；設備不支援的 OID（noSuchObject 等）不會出現在結果中。
+     * v1 設備遇到不存在的 OID 會讓整個請求回 noSuchName，此時移除該 OID 後重送，其餘 OID 照常取得。
      *
      * @throws SnmpException 設備無回應、v3 認證失敗或回應錯誤狀態
      */
     public Map<String, Variable> get(DeviceConfig device, List<String> oids) throws IOException {
         Map<String, Variable> result = new LinkedHashMap<>();
-        if (oids.isEmpty()) return result;
-
+        List<String> pending = new ArrayList<>(oids);
         Target<UdpAddress> target = targetFor(device);
-        PDU pdu = newPdu(device, PDU.GET);
-        for (String oid : oids) pdu.add(new VariableBinding(new OID(oid)));
+        while (!pending.isEmpty()) {
+            PDU pdu = newPdu(device, PDU.GET);
+            for (String oid : pending) pdu.add(new VariableBinding(new OID(oid)));
 
-        PDU response = send(device, pdu, target);
-        for (VariableBinding vb : response.getVariableBindings()) {
-            if (!vb.isException()) result.put(vb.getOid().toString(), vb.getVariable());
+            PDU response = sendRaw(device, pdu, target);
+            int index = response.getErrorIndex();
+            if (response.getErrorStatus() == PDU.noSuchName && index >= 1 && index <= pending.size()) {
+                pending.remove(index - 1);
+                continue;
+            }
+            checkErrorStatus(response);
+            for (VariableBinding vb : response.getVariableBindings()) {
+                if (!vb.isException()) result.put(vb.getOid().toString(), vb.getVariable());
+            }
+            break;
         }
         return result;
     }
@@ -219,6 +228,13 @@ public class SnmpSession implements Closeable {
     }
 
     private PDU send(DeviceConfig device, PDU pdu, Target<UdpAddress> target) throws IOException {
+        PDU response = sendRaw(device, pdu, target);
+        checkErrorStatus(response);
+        return response;
+    }
+
+    /** 送出請求；無回應或 v3 REPORT 時拋出例外，不檢查回應的錯誤狀態 */
+    private PDU sendRaw(DeviceConfig device, PDU pdu, Target<UdpAddress> target) throws IOException {
         ResponseEvent<UdpAddress> event = snmp.send(pdu, target);
         PDU response = event == null ? null : event.getResponse();
         if (response == null) {
@@ -231,10 +247,13 @@ public class SnmpSession implements Closeable {
             invalidate(device);
             throw new SnmpException("SNMPv3 認證失敗：" + describeReport(response));
         }
+        return response;
+    }
+
+    private static void checkErrorStatus(PDU response) throws SnmpException {
         if (response.getErrorStatus() != PDU.noError) {
             throw new SnmpException("設備回應錯誤：" + response.getErrorStatusText());
         }
-        return response;
     }
 
     private static String describeReport(PDU report) {

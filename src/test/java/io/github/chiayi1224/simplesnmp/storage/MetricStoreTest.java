@@ -2,7 +2,12 @@ package io.github.chiayi1224.simplesnmp.storage;
 
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
+import io.github.chiayi1224.simplesnmp.profile.BuiltinProfiles;
+import io.github.chiayi1224.simplesnmp.profile.MetricKind;
+import io.github.chiayi1224.simplesnmp.profile.MetricProfile;
+import io.github.chiayi1224.simplesnmp.profile.ProfileMetric;
 import io.github.chiayi1224.simplesnmp.threshold.AlertEvent;
+import io.github.chiayi1224.simplesnmp.threshold.ThresholdConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -481,5 +486,250 @@ class MetricStoreTest {
         assertTrue (store.trapTriggeredOidExists("1.3.6.1.4.1.9999.0.7", -1));
         assertFalse(store.trapTriggeredOidExists("1.3.6.1.4.1.9999.0.7", id));
         assertFalse(store.trapTriggeredOidExists("1.3.6.1.4.1.9999.0.8", -1));
+    }
+
+    // ─── 監控範本 ─────────────────────────────────────────────────
+
+    private static MetricProfile sampleProfile(String name) {
+        return new MetricProfile(null, name, "測試", "1.3.6.1.4.1.99999", false, List.of(
+            new ProfileMetric("cpu", MetricKind.VALUE, Map.of("oid", "1.3.6.1.4.1.99999.2.1.0"), "%", true),
+            new ProfileMetric("temperature", MetricKind.VALUE, Map.of("oid", "1.3.6.1.4.1.99999.3.1.0", "scale", "0.1"), "°C", false)));
+    }
+
+    @Test
+    void 範本_首次啟動建立三個內建範本() {
+        List<MetricProfile> all = store.loadProfiles();
+        assertEquals(List.of(BuiltinProfiles.CISCO_IOS, BuiltinProfiles.HOST_RESOURCES, BuiltinProfiles.NET_SNMP),
+            all.stream().filter(MetricProfile::builtin).map(MetricProfile::name).sorted().toList());
+        assertTrue(all.stream().allMatch(p -> !p.metrics().isEmpty()));
+    }
+
+    @Test
+    void 範本_新增查詢更新刪除() throws SQLException {
+        long id = store.createProfile(sampleProfile("Switch-X"));
+
+        MetricProfile loaded = store.loadProfile(id);
+        assertEquals("Switch-X", loaded.name());
+        assertEquals(2, loaded.metrics().size());
+        ProfileMetric temp = loaded.metrics().get(1);
+        assertEquals("0.1", temp.params().get("scale"));
+        assertEquals("°C", temp.unit());
+        assertFalse(temp.enabled());
+
+        store.updateProfile(id, new MetricProfile(id, "Switch-Y", "", "", false, List.of(loaded.metrics().get(0))));
+        assertEquals("Switch-Y", store.loadProfile(id).name());
+        assertEquals(1, store.loadProfile(id).metrics().size());
+
+        store.deleteProfile(id);
+        assertNull(store.loadProfile(id));
+    }
+
+    @Test
+    void 範本_名稱重複檢查排除自己() throws SQLException {
+        long id = store.createProfile(sampleProfile("Switch-X"));
+
+        assertTrue (store.profileNameExists("Switch-X", -1));
+        assertFalse(store.profileNameExists("Switch-X", id));
+        assertTrue (store.profileNameExists(BuiltinProfiles.CISCO_IOS, id), "不可使用內建範本的名稱");
+    }
+
+    @Test
+    void 範本_重複啟動不產生重複內建範本_使用者複本不被覆蓋(@TempDir Path dir) throws Exception {
+        String dbPath = dir.resolve("profiles.db").toString();
+        try (MetricStore first = new MetricStore(dbPath)) {
+            MetricProfile net = first.loadProfiles().stream()
+                .filter(p -> p.name().equals(BuiltinProfiles.NET_SNMP)).findFirst().orElseThrow();
+            first.createProfile(new MetricProfile(null, BuiltinProfiles.NET_SNMP + "（複本）", "我的修改",
+                net.matchPrefix(), false, List.of(net.metrics().get(0))));
+        }
+        try (MetricStore second = new MetricStore(dbPath)) {
+            List<MetricProfile> all = second.loadProfiles();
+            assertEquals(3, all.stream().filter(MetricProfile::builtin).count());
+            MetricProfile copy = all.stream().filter(p -> p.name().endsWith("（複本）")).findFirst().orElseThrow();
+            assertEquals("我的修改", copy.description());
+            assertEquals(1, copy.metrics().size());
+        }
+    }
+
+    @Test
+    void 範本_設備套用與刪除後改回自動() throws SQLException {
+        long id = store.createProfile(sampleProfile("Switch-X"));
+        store.addDevice(new DeviceConfig.Builder("Core-SW", "10.0.0.9").profileId(id).build());
+        store.addDevice(new DeviceConfig.Builder("Linux-1", "10.0.0.1").build());
+        store.updateDeviceSysObjectId("Linux-1", "1.3.6.1.4.1.8072.3.2.10");
+
+        assertEquals("Switch-X", store.queryDeviceByName("Core-SW").get("appliedProfileName"));
+        assertEquals(id, store.loadDevice("Core-SW").getProfileId());
+        assertEquals(BuiltinProfiles.NET_SNMP, store.queryDeviceByName("Linux-1").get("appliedProfileName"));
+        assertEquals("1.3.6.1.4.1.8072.3.2.10", store.loadDevice("Linux-1").getSysObjectId());
+
+        store.deleteProfile(id);
+
+        assertNull(store.loadDevice("Core-SW").getProfileId());
+        assertEquals(BuiltinProfiles.HOST_RESOURCES, store.queryDeviceByName("Core-SW").get("appliedProfileName"));
+    }
+
+    // ─── 自訂指標閾值 ─────────────────────────────────────────────
+
+    @Test
+    void 閾值_自訂指標未設定回傳null_內建三項有預設() {
+        assertNull(store.loadThresholdConfig("temperature"));
+        assertNotNull(store.loadThresholdConfig("cpu"));
+        assertNotNull(store.loadThresholdConfig("disk:/home"));
+        assertEquals("disk:/home", store.loadThresholdConfig("disk:/home").getMetricName());
+    }
+
+    @Test
+    void 閾值_新增自訂LOW方向後可載入_刪除後回到null() throws SQLException {
+        long id = store.createThreshold("free_ports", ThresholdConfig.Direction.LOW, 5, 8, 2, 2, "可用埠數");
+        assertTrue(store.thresholdExists("free_ports"));
+        assertEquals("free_ports", store.thresholdMetricName(id));
+
+        ThresholdConfig cfg = store.loadThresholdConfig("free_ports");
+        assertEquals(ThresholdConfig.Direction.LOW, cfg.getDirection());
+        assertEquals(5.0, cfg.getThreshold());
+        assertTrue(cfg.isExceeded(2));
+
+        Map<String, Object> row = store.queryAllThresholds().stream()
+            .filter(r -> "free_ports".equals(r.get("metricName"))).findFirst().orElseThrow();
+        assertEquals("LOW", row.get("direction"));
+        assertEquals(false, row.get("builtin"));
+
+        store.updateThreshold(id, ThresholdConfig.Direction.HIGH, 50, 40, 1, 1);
+        assertEquals(ThresholdConfig.Direction.HIGH, store.loadThresholdConfig("free_ports").getDirection());
+
+        store.deleteThreshold(id);
+        assertNull(store.loadThresholdConfig("free_ports"));
+        assertNull(store.thresholdMetricName(id));
+    }
+
+    @Test
+    void 閾值_內建三項方向為HIGH且標記builtin() {
+        List<Map<String, Object>> rows = store.queryAllThresholds();
+        assertEquals(3, rows.size());
+        for (Map<String, Object> r : rows) {
+            assertEquals("HIGH", r.get("direction"));
+            assertEquals(true, r.get("builtin"));
+        }
+    }
+
+    // ─── 自訂指標 ─────────────────────────────────────────────────
+
+    @Test
+    void 自訂指標_最新狀態每個指標取最後一筆_既有欄位不變() throws Exception {
+        store.saveCpu("SW-01", 10.0);
+        store.saveCustomMetric("SW-01", "temperature", 40.0, "°C");
+        Thread.sleep(5);   // 時間欄位為 ISO-8601 字串，間隔確保排序
+        store.saveCustomMetric("SW-01", "temperature", 45.0, "°C");
+        store.saveCustomMetric("SW-01", "free_ports", 3.0, "");
+
+        Map<String, Object> s = store.queryLatestStatus().stream()
+            .filter(m -> "SW-01".equals(m.get("deviceName"))).findFirst().orElseThrow();
+        assertEquals(List.of("deviceName", "cpu", "memory", "disks", "custom"), List.copyOf(s.keySet()));
+        assertNotNull(s.get("cpu"));
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> custom = (List<Map<String, Object>>) s.get("custom");
+        assertEquals(2, custom.size());
+        assertEquals("free_ports", custom.get(0).get("metricKey"));
+        assertEquals("temperature", custom.get(1).get("metricKey"));
+        assertEquals(45.0, custom.get(1).get("value"));
+        assertEquals("°C", custom.get(1).get("unit"));
+    }
+
+    @Test
+    void 自訂指標_只有自訂指標的設備也出現在狀態查詢() {
+        store.saveCustomMetric("UPS-01", "battery_pct", 98.0, "%");
+        Map<String, Object> s = store.queryLatestStatus().stream()
+            .filter(m -> "UPS-01".equals(m.get("deviceName"))).findFirst().orElseThrow();
+        assertNull(s.get("cpu"));
+        assertEquals(1, ((List<?>) s.get("custom")).size());
+    }
+
+    // ─── Poll OID 升級轉換（D8）────────────────────────────────────
+
+    /** 建立升級前的 DB：devices 含輪詢狀態，poll_oids 依參數設定啟用狀態 */
+    private static String legacyDb(Path dir, boolean cpuIdleEnabled, boolean diskEnabled) throws Exception {
+        String dbPath = dir.resolve("legacy.db").toString();
+        try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
+             Statement st = c.createStatement()) {
+            st.execute("""
+                CREATE TABLE devices (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, host TEXT NOT NULL,
+                    port INTEGER NOT NULL DEFAULT 161, community TEXT NOT NULL DEFAULT 'public',
+                    enabled INTEGER NOT NULL DEFAULT 1, created TEXT NOT NULL, updated TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'UNKNOWN')
+                """);
+            st.execute("INSERT INTO devices(name, host, created, updated, status) VALUES('Polled', '10.0.0.1', 'x', 'x', 'ONLINE')");
+            st.execute("INSERT INTO devices(name, host, created, updated, status) VALUES('Offline', '10.0.0.2', 'x', 'x', 'OFFLINE')");
+            st.execute("INSERT INTO devices(name, host, created, updated) VALUES('NeverPolled', '10.0.0.3', 'x', 'x')");
+            st.execute("""
+                CREATE TABLE poll_oids (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, oid TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '', group_name TEXT NOT NULL, poll_type TEXT NOT NULL DEFAULT 'SCALAR',
+                    enabled INTEGER NOT NULL DEFAULT 1, created TEXT NOT NULL, updated TEXT NOT NULL)
+                """);
+            String[][] rows = {
+                { "1.3.6.1.4.1.2021.11.9.0",  "cpu",    "1" },   // cpuUser：舊版計算不使用
+                { "1.3.6.1.4.1.2021.11.11.0", "cpu",    cpuIdleEnabled ? "1" : "0" },
+                { "1.3.6.1.4.1.2021.4.5.0",   "memory", "1" },
+                { "1.3.6.1.4.1.2021.4.6.0",   "memory", "1" },
+                { "1.3.6.1.4.1.2021.4.14.0",  "memory", "1" },
+                { "1.3.6.1.4.1.2021.4.15.0",  "memory", "1" },
+                { "1.3.6.1.2.1.25.2.3.1.2",   "disk",   diskEnabled ? "1" : "0" },
+                { "1.3.6.1.2.1.25.2.3.1.3",   "disk",   diskEnabled ? "1" : "0" },
+            };
+            for (String[] r : rows) {
+                st.execute("INSERT INTO poll_oids(oid, name, group_name, enabled, created, updated) VALUES('"
+                    + r[0] + "', '" + r[0] + "', '" + r[1] + "', " + r[2] + ", 'x', 'x')");
+            }
+        }
+        return dbPath;
+    }
+
+    private static MetricProfile migrated(MetricStore s) {
+        return s.loadProfiles().stream()
+            .filter(p -> "Net-SNMP（UCD-SNMP）（升級轉換）".equals(p.name())).findFirst().orElse(null);
+    }
+
+    @Test
+    void 升級轉換_停用的CPU與磁碟轉為範本並指定給曾輪詢的設備_只執行一次(@TempDir Path dir) throws Exception {
+        String dbPath = legacyDb(dir, false, false);
+
+        try (MetricStore upgraded = new MetricStore(dbPath)) {
+            MetricProfile p = migrated(upgraded);
+            assertNotNull(p, "應建立升級轉換範本");
+            assertFalse(p.builtin());
+            Map<String, Boolean> enabled = new java.util.HashMap<>();
+            for (ProfileMetric m : p.metrics()) enabled.put(m.metricKey(), m.enabled());
+            assertEquals(Map.of("cpu", false, "memory", true, "disk", false), enabled);
+
+            assertEquals(p.id(), upgraded.loadDevice("Polled").getProfileId());
+            assertEquals(p.id(), upgraded.loadDevice("Offline").getProfileId());
+            assertNull(upgraded.loadDevice("NeverPolled").getProfileId(), "從未輪詢的設備維持自動");
+
+            // 管理者之後把設備改回自動
+            upgraded.updateDeviceByName(new DeviceConfig.Builder("Polled", "10.0.0.1").profileId(null).build(), true);
+        }
+
+        try (MetricStore again = new MetricStore(dbPath)) {
+            assertEquals(1, again.loadProfiles().stream().filter(p -> p.name().contains("升級轉換")).count(), "不重複轉換");
+            assertNull(again.loadDevice("Polled").getProfileId(), "第二次開啟不再重新指定");
+        }
+    }
+
+    @Test
+    void 升級轉換_只停用未使用的OID或全部啟用時不建立範本(@TempDir Path dir) throws Exception {
+        String dbPath = legacyDb(dir, true, true);
+        try (MetricStore upgraded = new MetricStore(dbPath)) {
+            assertNull(migrated(upgraded));
+            assertNull(upgraded.loadDevice("Polled").getProfileId());
+        }
+    }
+
+    @Test
+    void 升級轉換_全新安裝不建立範本但標記已轉換() {
+        assertNull(migrated(store));
+        assertEquals("true", store.getSetting("poll_oids_migrated", "false"));
     }
 }

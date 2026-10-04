@@ -1,6 +1,7 @@
 package io.github.chiayi1224.simplesnmp.web;
 
 import io.github.chiayi1224.simplesnmp.discovery.DiscoveryService;
+import io.github.chiayi1224.simplesnmp.profile.ProfileCollector;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import io.github.chiayi1224.simplesnmp.trap.TrapReceiver;
 import io.github.chiayi1224.simplesnmp.web.servlet.*;
@@ -30,11 +31,13 @@ public class JettyServer {
     private final MetricStore  store;
     private final TrapReceiver trapReceiver;
     private final DiscoveryService discovery;
+    private final ProfileCollector profilePreview;
     private Server             server;
 
     public JettyServer(int httpPort, boolean httpsEnabled, int httpsPort,
                        Path keystorePath, String keystorePassword,
-                       MetricStore store, TrapReceiver trapReceiver, DiscoveryService discovery) {
+                       MetricStore store, TrapReceiver trapReceiver, DiscoveryService discovery,
+                       ProfileCollector profilePreview) {
         this.httpPort         = httpPort;
         this.httpsEnabled     = httpsEnabled;
         this.httpsPort        = httpsPort;
@@ -43,6 +46,7 @@ public class JettyServer {
         this.store            = store;
         this.trapReceiver     = trapReceiver;
         this.discovery        = discovery;
+        this.profilePreview   = profilePreview;
     }
 
     public void start() throws Exception {
@@ -99,13 +103,13 @@ public class JettyServer {
         ctx.addServlet(new ServletHolder(new UserServlet(store)),                       "/api/admin/users/*");
         ctx.addServlet(new ServletHolder(new TrapMappingServlet(store, trapReceiver)),  "/api/admin/trap-mappings/*");
         ctx.addServlet(new ServletHolder(new UnknownTrapServlet(store)),                "/api/admin/unknown-traps/*");
-        ctx.addServlet(new ServletHolder(new PollOidServlet(store)),                    "/api/admin/poll-oids/*");
         ctx.addServlet(new ServletHolder(new SettingsServlet(store)),                   "/api/admin/settings/*");
         ctx.addServlet(new ServletHolder(new ThresholdServlet(store)),                  "/api/admin/thresholds/*");
         ctx.addServlet(new ServletHolder(new V3UserServlet(store, trapReceiver)),       "/api/admin/v3-users/*");
         ctx.addServlet(new ServletHolder(new ApiTokenServlet(store)),                   "/api/admin/tokens/*");
         ctx.addServlet(new ServletHolder(new AuditLogServlet(store)),                   "/api/admin/audit-logs");
         ctx.addServlet(new ServletHolder(new DiscoveryServlet(store, discovery)),       "/api/admin/discovery/*");
+        ctx.addServlet(new ServletHolder(new ProfileServlet(store, profilePreview)),    "/api/admin/profiles/*");
 
         // ── 靜態檔案 ──────────────────────────────────────────────
         String staticBase = JettyServer.class.getResource("/static").toExternalForm();

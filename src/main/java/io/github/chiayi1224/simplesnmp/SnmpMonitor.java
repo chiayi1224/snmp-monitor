@@ -5,6 +5,7 @@ import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
 import io.github.chiayi1224.simplesnmp.discovery.DiscoveryService;
 import io.github.chiayi1224.simplesnmp.maintenance.DataRetentionJob;
 import io.github.chiayi1224.simplesnmp.poller.SnmpPoller;
+import io.github.chiayi1224.simplesnmp.profile.ProfileCollector;
 import io.github.chiayi1224.simplesnmp.snmp.SnmpSession;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import io.github.chiayi1224.simplesnmp.trap.TrapReceiver;
@@ -66,14 +67,15 @@ public class SnmpMonitor {
         );
         trapReceiver.start();
 
-        // ── 5. OID 掃描（獨立的 SNMP 連線，不與輪詢共用）──────────
+        // ── 5. OID 掃描與範本預覽（獨立的 SNMP 連線，不與輪詢共用）──
         SnmpSession discoverySession = new SnmpSession();
+        ProfileCollector profilePreview = new ProfileCollector(discoverySession);
         DiscoveryService discovery = new DiscoveryService(store, discoverySession, DiscoveryService.Limits.DEFAULT);
 
         // ── 6. Web Server（設備管理頁面在這）─────────────────────
         JettyServer jetty = new JettyServer(
             webPort, httpsEnabled, httpsPort, keystorePath, keystorePass,
-            store, trapReceiver, discovery);
+            store, trapReceiver, discovery, profilePreview);
         jetty.start();
 
         // ── 7. 優雅關閉 ───────────────────────────────────────────

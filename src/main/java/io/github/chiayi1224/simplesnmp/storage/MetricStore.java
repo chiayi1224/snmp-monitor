@@ -4,6 +4,9 @@ import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.config.TrapOidMapping;
 import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
 import io.github.chiayi1224.simplesnmp.model.DiskInfo;
+import io.github.chiayi1224.simplesnmp.profile.BuiltinProfiles;
+import io.github.chiayi1224.simplesnmp.profile.MetricProfile;
+import io.github.chiayi1224.simplesnmp.profile.ProfileResolver;
 import io.github.chiayi1224.simplesnmp.threshold.AlertEvent;
 import io.github.chiayi1224.simplesnmp.threshold.ThresholdConfig;
 import org.slf4j.Logger;
@@ -25,16 +28,17 @@ import java.util.Map;
  * 本類別負責開啟連線、建立 schema、寫入預設資料，實際的 SQL 依資料表分散於各 Repository：
  *   users               — {@link UserRepository}      管理帳號（密碼 BCrypt hash）
  *   devices             — {@link DeviceRepository}    受監控設備清單
- *   cpu/mem/disk_metrics— {@link MetricRepository}    輪詢指標歷史
+ *   cpu/mem/disk/custom_metrics — {@link MetricRepository} 輪詢指標歷史
  *   alert_events        — {@link AlertRepository}     閾值狀態變化
  *   trap_oid_mappings / unknown_traps / unknown_sources — {@link TrapRepository}
- *   poll_oids           — {@link PollOidRepository}   Poll OID 設定
+ *   poll_oids           — 已停用（僅保留資料以利回滾；升級時由 {@link PollOidMigration} 轉換為範本）
  *   app_settings        — {@link SettingsRepository}  系統設定（key-value）
  *   threshold_settings  — {@link ThresholdRepository} 告警閾值設定
  *   snmp_v3_users       — {@link V3UserRepository}    SNMPv3 Trap 使用者
  *   api_tokens          — {@link ApiTokenRepository}  API Token
  *   audit_logs          — {@link AuditLogRepository}  稽核日誌
  *   device_scans / device_scan_results — {@link DiscoveryRepository} OID 掃描結果
+ *   metric_profiles / profile_metrics   — {@link ProfileRepository}   監控範本
  */
 public class MetricStore implements AutoCloseable {
 
@@ -47,13 +51,13 @@ public class MetricStore implements AutoCloseable {
     private final MetricRepository    metrics;
     private final AlertRepository     alerts;
     private final TrapRepository      traps;
-    private final PollOidRepository   pollOids;
     private final SettingsRepository  settings;
     private final ThresholdRepository thresholds;
     private final V3UserRepository    v3Users;
     private final ApiTokenRepository  apiTokens;
     private final AuditLogRepository  auditLogs;
     private final DiscoveryRepository discovery;
+    private final ProfileRepository   profiles;
 
     public MetricStore(String dbPath) throws Exception {
         // 確保父目錄存在（目錄不存在時自動建立，DB 檔由 SQLite JDBC 自動建立）
@@ -75,21 +79,22 @@ public class MetricStore implements AutoCloseable {
         metrics    = new MetricRepository(db);
         alerts     = new AlertRepository(db);
         traps      = new TrapRepository(db);
-        pollOids   = new PollOidRepository(db);
         settings   = new SettingsRepository(db);
         thresholds = new ThresholdRepository(db);
         v3Users    = new V3UserRepository(db);
         apiTokens  = new ApiTokenRepository(db);
         auditLogs  = new AuditLogRepository(db);
         discovery  = new DiscoveryRepository(db);
+        profiles   = new ProfileRepository(db);
 
         users.seedDefaults();
         traps.seedDefaults();
-        pollOids.seedDefaults();
         settings.seedDefaults();
         thresholds.seedDefaults();
         v3Users.seedDefaults();
         discovery.failInterruptedScans();
+        profiles.syncBuiltin(BuiltinProfiles.all());
+        new PollOidMigration(db, profiles, settings).runOnce();
         log.info("MetricStore 開啟: {}", dbPath);
     }
 
@@ -158,8 +163,23 @@ public class MetricStore implements AutoCloseable {
         return devices.loadEnabled();
     }
 
+    /** 設備清單；每台另附實際套用的範本（appliedProfileId / appliedProfileName） */
     public List<Map<String, Object>> queryAllDevices() {
-        return devices.queryAll();
+        ProfileResolver resolver = new ProfileResolver(profiles.loadAll());
+        List<Map<String, Object>> rows = devices.queryAll();
+        rows.forEach(r -> addAppliedProfile(r, resolver));
+        return rows;
+    }
+
+    private static void addAppliedProfile(Map<String, Object> row, ProfileResolver resolver) {
+        MetricProfile applied = resolver.resolve((Long) row.get("profileId"), (String) row.get("sysObjectId"));
+        row.put("appliedProfileId",   applied.id());
+        row.put("appliedProfileName", applied.name());
+    }
+
+    /** 輪詢時更新設備的 sysObjectID */
+    public void updateDeviceSysObjectId(String name, String sysObjectId) {
+        devices.updateSysObjectId(name, sysObjectId);
     }
 
     /** 新增設備（含 SNMP 版本與 v3 設定） */
@@ -202,7 +222,9 @@ public class MetricStore implements AutoCloseable {
 
     /** 依名稱查詢單台設備 */
     public Map<String, Object> queryDeviceByName(String name) {
-        return devices.queryByName(name);
+        Map<String, Object> row = devices.queryByName(name);
+        if (row != null) addAppliedProfile(row, new ProfileResolver(profiles.loadAll()));
+        return row;
     }
 
     /** 依名稱更新設備 */
@@ -233,6 +255,10 @@ public class MetricStore implements AutoCloseable {
 
     public void saveDisk(String deviceName, List<DiskInfo> disks) {
         metrics.saveDisk(deviceName, disks);
+    }
+
+    public void saveCustomMetric(String deviceName, String metricKey, double value, String unit) {
+        metrics.saveCustom(deviceName, metricKey, value, unit);
     }
 
     public void saveAlertEvent(AlertEvent event) {
@@ -323,37 +349,6 @@ public class MetricStore implements AutoCloseable {
         return traps.queryUnknownSources();
     }
 
-    // ─── Poll OID ─────────────────────────────────────────────────
-
-    /** 載入所有啟用的 SCALAR OID 字串（供 SnmpPoller GET 使用） */
-    public List<String> loadEnabledScalarOids() {
-        return pollOids.loadEnabledScalarOids();
-    }
-
-    /** 磁碟 WALK 是否啟用（只要 disk group 中有任一筆啟用即視為啟用） */
-    public boolean isDiskPollEnabled() {
-        return pollOids.isDiskPollEnabled();
-    }
-
-    /** 查詢所有 Poll OID（供 Web API 列表） */
-    public List<Map<String, Object>> queryAllPollOids() {
-        return pollOids.queryAll();
-    }
-
-    public void addPollOid(String oid, String name, String description,
-                           String groupName, String pollType) throws SQLException {
-        pollOids.add(oid, name, description, groupName, pollType);
-    }
-
-    public void updatePollOid(long id, String oid, String name, String description,
-                              String groupName, String pollType, boolean enabled) throws SQLException {
-        pollOids.update(id, oid, name, description, groupName, pollType, enabled);
-    }
-
-    public void deletePollOid(long id) throws SQLException {
-        pollOids.delete(id);
-    }
-
     // ─── app_settings ─────────────────────────────────────────────
 
     public Map<String, Object> queryAllSettings() {
@@ -386,9 +381,34 @@ public class MetricStore implements AutoCloseable {
         return thresholds.queryAll();
     }
 
+    /** 更新閾值，方向設為 HIGH（內建三項的方向固定為 HIGH） */
     public void updateThreshold(long id, double threshold, double rearm,
                                 int triggerCount, int rearmCount) throws SQLException {
-        thresholds.update(id, threshold, rearm, triggerCount, rearmCount);
+        updateThreshold(id, ThresholdConfig.Direction.HIGH, threshold, rearm, triggerCount, rearmCount);
+    }
+
+    public void updateThreshold(long id, ThresholdConfig.Direction direction, double threshold, double rearm,
+                                int triggerCount, int rearmCount) throws SQLException {
+        thresholds.update(id, direction, threshold, rearm, triggerCount, rearmCount);
+    }
+
+    /** 指定編號閾值的指標名稱；不存在回傳 null */
+    public String thresholdMetricName(long id) throws SQLException {
+        return thresholds.metricNameOf(id);
+    }
+
+    public boolean thresholdExists(String metricName) throws SQLException {
+        return thresholds.exists(metricName);
+    }
+
+    /** 新增自訂指標閾值，回傳編號 */
+    public long createThreshold(String metricName, ThresholdConfig.Direction direction, double threshold,
+                                double rearm, int triggerCount, int rearmCount, String description) throws SQLException {
+        return thresholds.create(metricName, direction, threshold, rearm, triggerCount, rearmCount, description);
+    }
+
+    public void deleteThreshold(long id) throws SQLException {
+        thresholds.delete(id);
     }
 
     // ─── snmp_v3_users ────────────────────────────────────────────
@@ -451,6 +471,36 @@ public class MetricStore implements AutoCloseable {
     /** 查詢稽核日誌 */
     public List<Map<String, Object>> queryAuditLogs(String eventType, String actor, int limit) {
         return auditLogs.query(eventType, actor, limit);
+    }
+
+    // ─── 監控範本 ─────────────────────────────────────────────────
+
+    /** 所有範本（含指標），內建在前 */
+    public List<MetricProfile> loadProfiles() {
+        return profiles.loadAll();
+    }
+
+    /** 單一範本；不存在回傳 null */
+    public MetricProfile loadProfile(long id) {
+        return profiles.load(id);
+    }
+
+    public boolean profileNameExists(String name, long excludeId) throws SQLException {
+        return profiles.nameExists(name, excludeId);
+    }
+
+    public long createProfile(MetricProfile profile) throws SQLException {
+        return profiles.create(profile);
+    }
+
+    public void updateProfile(long id, MetricProfile profile) throws SQLException {
+        profiles.update(id, profile);
+    }
+
+    /** 刪除範本；原本手動指定此範本的設備改回自動套用 */
+    public void deleteProfile(long id) throws SQLException {
+        devices.clearProfile(id);
+        profiles.delete(id);
     }
 
     // ─── 資料保存期限 ─────────────────────────────────────────────

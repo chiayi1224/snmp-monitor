@@ -193,8 +193,11 @@ src/main/java/io/github/chiayi1224/simplesnmp/
 | GET | `/api/admin/discovery/scans/{id}/oids?prefix=&q=&offset=&limit=` | OID 明細分頁 |
 | GET / POST / PUT / DELETE | `/api/admin/v3-users` | Trap 用 SNMPv3 使用者 |
 | GET / PUT | `/api/admin/settings`、`/api/admin/settings/{key}` | 系統設定 |
-| GET / PUT | `/api/admin/thresholds`、`/api/admin/thresholds/{id}` | 閾值設定 |
-| GET / POST / PUT / DELETE | `/api/admin/poll-oids` | Poll OID |
+| GET / POST / PUT / DELETE | `/api/admin/thresholds`、`/api/admin/thresholds/{id}` | 閾值設定（POST 新增自訂指標閾值，可設 `direction` HIGH／LOW；內建 cpu／memory／disk 不可刪除） |
+| GET / POST | `/api/admin/profiles` | 監控範本清單（含套用設備數）／新增 |
+| GET / PUT / DELETE | `/api/admin/profiles/{id}` | 單一範本／更新／刪除（內建範本 403） |
+| POST | `/api/admin/profiles/{id}/copy` | 複製範本 |
+| POST | `/api/admin/profiles/preview` | 以範本對設備試算一次（不儲存、不告警） |
 | GET / POST | `/api/admin/tokens`、`/api/admin/tokens/{id}` | API Token（更新或 `{"action":"delete"}` 刪除皆用 POST） |
 | GET | `/api/admin/audit-logs` | 稽核日誌 |
 

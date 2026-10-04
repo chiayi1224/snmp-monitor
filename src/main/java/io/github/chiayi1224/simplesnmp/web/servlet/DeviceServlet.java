@@ -35,7 +35,8 @@ import java.util.Map;
  *   "v3AuthProtocol": "SHA256",      ← MD5 / SHA / SHA224 / SHA256 / SHA384 / SHA512
  *   "v3AuthPassword": "********",    ← 至少 8 字元；省略代表不設定（更新時代表沿用舊值）
  *   "v3PrivProtocol": "AES256",      ← DES / AES128 / AES192 / AES256
- *   "v3PrivPassword": "********"     ← 需先有認證密碼；更新時傳 "" 代表清除
+ *   "v3PrivPassword": "********",    ← 需先有認證密碼；更新時傳 "" 代表清除
+ *   "profileId":      3              ← 監控範本；null 代表依 sysObjectID 自動套用，更新時省略代表不變
  * }
  *
  * 回應不包含 v3 密碼，只有 v3AuthConfigured / v3PrivConfigured。
@@ -102,6 +103,7 @@ public class DeviceServlet extends BaseJsonServlet {
 
                 DeviceConfig device = parseDevice(body, dName, host, null);
                 String error = device.validate();
+                if (error == null) error = validateProfile(device);
                 if (error != null) { writeError(resp, 400, error); return; }
 
                 store.addDevice(device);
@@ -125,6 +127,7 @@ public class DeviceServlet extends BaseJsonServlet {
                     DeviceConfig device   = parseDevice(body, name, host, existing);
                     // 以「合併舊密碼後」的結果驗證，確保 auth / priv 搭配與長度正確
                     String error = mergePasswords(device, existing).validate();
+                    if (error == null) error = validateProfile(device);
                     if (error != null) { writeError(resp, 400, error); return; }
 
                     boolean enabled = optBool(body, "enabled", true);
@@ -166,11 +169,32 @@ public class DeviceServlet extends BaseJsonServlet {
         b.v3PrivProtocol(privProto != null || existing == null
             ? V3UserConfig.PrivProtocol.parse(privProto) : existing.getV3PrivProtocol());
 
+        // 監控範本：欄位存在（含 null）就採用，省略時沿用舊值
+        JsonNode profile = body.path("profileId");
+        if (profile.isMissingNode()) {
+            b.profileId(existing != null ? existing.getProfileId() : null);
+        } else if (profile.isNumber()) {
+            b.profileId(profile.asLong());
+        } else if (profile.isTextual() && !profile.asText().isBlank() && !"auto".equals(profile.asText().trim())) {
+            b.profileId(parseId(profile.asText().trim()));   // 非數字時為 -1，由 validateProfile 回 400
+        } else {
+            b.profileId(null);                               // null / "" / "auto"：依 sysObjectID 自動套用
+        }
+
         String authPass = rawText(body, "v3AuthPassword");
         String privPass = rawText(body, "v3PrivPassword");
         b.v3AuthPassword(authPass != null || existing != null ? authPass : "");
         b.v3PrivPassword(privPass != null || existing != null ? privPass : "");
         return b.build();
+    }
+
+    /** 手動指定的範本必須存在；合法回傳 null */
+    private String validateProfile(DeviceConfig d) {
+        if (d.getProfileId() == null) return null;
+        if (d.getProfileId() < 0 || store.loadProfile(d.getProfileId()) == null) {
+            return "找不到監控範本 #" + d.getProfileId();
+        }
+        return null;
     }
 
     /** 密碼為 null（沿用舊值）時填入舊密碼，供驗證使用 */

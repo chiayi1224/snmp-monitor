@@ -19,7 +19,7 @@
   section.active { display: block; }
   h2 { font-size: .85rem; color: #888; margin-bottom: 14px; text-transform: uppercase; letter-spacing: 1px; }
   table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
-  th { background: #1a1a2e; color: #ccc; text-align: left; padding: 10px 14px; font-size: .8rem; }
+  th { background: #1a1a2e; color: #ccc; text-align: left; padding: 10px 14px; font-size: .8rem; white-space: nowrap; }
   td { padding: 10px 14px; border-bottom: 1px solid #eee; font-size: .9rem; }
   tr:last-child td { border-bottom: none; }
   tr:hover td { background: #fafafa; }
@@ -40,7 +40,7 @@
   input[type=text], input[type=password], input[type=number], select { width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: .9rem; margin-top: 4px; }
   .toggle { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
   .pct-bar { display: inline-block; width: 80px; height: 8px; background: #eee; border-radius: 4px; vertical-align: middle; margin-right: 6px; overflow: hidden; }
-  .pct-fill { height: 100%; border-radius: 4px; }
+  .pct-fill { display: block; height: 100%; border-radius: 4px; }
   .alert-triggered { color: #c62828; font-weight: 600; }
   .alert-resolved  { color: #2e7d32; }
   .hint { font-size: .8rem; color: #e65100; margin-top: 4px; }
@@ -53,6 +53,13 @@
   .samples { margin: 0; padding-left: 16px; color: #555; font-size: .8rem; }
   .pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin: 8px 0 20px; font-size: .85rem; color: #666; }
   .section-gap { margin-top: 20px; }
+  .badge.info { background: #e3f2fd; color: #1565c0; }
+  .err-text { color: #c62828; }
+  dialog.wide { width: min(1000px, 96vw); max-height: 94vh; overflow-y: auto; }
+  .metric-table td { padding: 6px 8px; vertical-align: top; }
+  .metric-table input, .metric-table select { margin-top: 0; padding: 5px 6px; font-size: .8rem; }
+  .param-row { display: flex; gap: 6px; align-items: center; margin-bottom: 4px; }
+  .param-row span { font-size: .75rem; color: #888; white-space: nowrap; min-width: 84px; }
   footer { text-align: center; padding: 16px; font-size: .75rem; color: #bbb; margin-top: 24px; }
 </style>
 </head>
@@ -65,6 +72,7 @@
     <button class="active" onclick="showTab('status', this)">狀態</button>
     <button onclick="showTab('devices', this)">設備管理</button>
     <button onclick="showTab('discovery', this)">OID 探索</button>
+    <button onclick="showTab('profiles', this)">監控範本</button>
     <button onclick="showTab('traps', this)">Trap 對應</button>
     <button onclick="showTab('alerts', this)">告警記錄</button>
     <button onclick="showTab('users', this)">帳號管理</button>
@@ -82,8 +90,8 @@
   <section id="tab-status" class="active">
     <h2>各設備目前狀態（每 30 秒自動更新）</h2>
     <table>
-      <thead><tr><th>設備</th><th>CPU</th><th>記憶體</th><th>磁碟</th></tr></thead>
-      <tbody id="status-body"><tr><td colspan="4" style="color:#aaa">載入中...</td></tr></tbody>
+      <thead><tr><th>設備</th><th>CPU</th><th>記憶體</th><th>磁碟</th><th>其他指標</th></tr></thead>
+      <tbody id="status-body"><tr><td colspan="5" style="color:#aaa">載入中...</td></tr></tbody>
     </table>
   </section>
 
@@ -94,8 +102,8 @@
     </div>
     <h2>設備清單</h2>
     <table>
-      <thead><tr><th>名稱</th><th>IP / Host</th><th>Port</th><th>SNMP</th><th>狀態</th><th>操作</th></tr></thead>
-      <tbody id="devices-body"><tr><td colspan="6" style="color:#aaa">載入中...</td></tr></tbody>
+      <thead><tr><th>名稱</th><th>IP / Host</th><th>Port</th><th>SNMP</th><th>監控範本</th><th>狀態</th><th>操作</th></tr></thead>
+      <tbody id="devices-body"><tr><td colspan="7" style="color:#aaa">載入中...</td></tr></tbody>
     </table>
   </section>
 
@@ -127,7 +135,7 @@
         <button class="btn btn-primary" onclick="loadOids(0)">篩選</button>
       </div>
       <table>
-        <thead><tr><th style="width:38%">OID</th><th style="width:14%">型別</th><th>值</th></tr></thead>
+        <thead><tr><th style="width:36%">OID</th><th style="width:12%">型別</th><th>值</th><th style="width:96px"></th></tr></thead>
         <tbody id="disc-oids"></tbody>
       </table>
       <div class="pager">
@@ -141,6 +149,19 @@
     <table>
       <thead><tr><th>#</th><th>開始時間</th><th>狀態</th><th>OID 筆數</th><th>操作</th></tr></thead>
       <tbody id="disc-scans"><tr><td colspan="5" style="color:#aaa">尚無掃描</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- 監控範本 -->
+  <section id="tab-profiles">
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="openProfileDialog()">＋ 新增範本</button>
+    </div>
+    <div class="panel">每台設備依 sysObjectID 自動套用前綴最長的範本，沒有符合時使用「HOST-RESOURCES 通用」；也可在設備對話框手動指定。內建範本不可修改，請複製後再編輯。</div>
+    <h2>範本清單</h2>
+    <table>
+      <thead><tr><th>名稱</th><th>sysObjectID 前綴</th><th>指標</th><th>套用設備</th><th style="width:220px">操作</th></tr></thead>
+      <tbody id="profiles-body"><tr><td colspan="5" style="color:#aaa">載入中...</td></tr></tbody>
     </table>
   </section>
 
@@ -176,7 +197,7 @@
         <tbody>
           <tr><td style="width:180px">效能數據</td>
               <td><input type="number" id="ret-metrics" min="0" max="36500" class="inline-input" style="width:110px"> 天</td>
-              <td style="color:#888;font-size:.85rem">CPU / 記憶體 / 磁碟</td></tr>
+              <td style="color:#888;font-size:.85rem">CPU / 記憶體 / 磁碟 / 自訂指標</td></tr>
           <tr><td>告警記錄</td>
               <td><input type="number" id="ret-alerts" min="0" max="36500" class="inline-input" style="width:110px"> 天</td>
               <td style="color:#888;font-size:.85rem">每個設備＋指標最後一筆狀態一律保留</td></tr>
@@ -292,11 +313,82 @@
         <div class="toggle"><input type="checkbox" id="d-v3-clear-priv"><span>清除加密密碼（改為 authNoPriv）</span></div>
       </label>
     </div>
+    <label>監控範本 <span class="hint" id="d-profile-hint" style="color:#1565c0"></span>
+      <select id="d-profile"></select>
+    </label>
     <label><div class="toggle"><input type="checkbox" id="d-enabled" checked><span>啟用監控</span></div></label>
   </div>
   <div class="dialog-footer">
     <button class="btn" onclick="closeDialog('device-dialog')">取消</button>
     <button class="btn btn-primary" onclick="saveDevice()">儲存</button>
+  </div>
+</dialog>
+
+<!-- 監控範本 Dialog -->
+<dialog id="profile-dialog" class="wide">
+  <div class="dialog-header" id="profile-dialog-title">新增範本</div>
+  <div class="dialog-body">
+    <input type="hidden" id="pf-id">
+    <div class="hint" id="pf-readonly" style="display:none">內建範本為唯讀，可直接預覽；要修改請先複製。</div>
+    <div style="display:flex;gap:12px">
+      <label style="flex:1">名稱 * <input type="text" id="pf-name" maxlength="64"></label>
+      <label style="flex:1">sysObjectID 前綴（選填） <input type="text" id="pf-prefix" class="mono" placeholder="例如 1.3.6.1.4.1.9"></label>
+    </div>
+    <label>說明 <input type="text" id="pf-desc"></label>
+    <div>
+      <table class="metric-table">
+        <thead><tr><th style="width:130px">指標名稱</th><th style="width:200px">計算類型</th><th>參數</th><th style="width:70px">單位</th><th style="width:44px">啟用</th><th style="width:44px"></th></tr></thead>
+        <tbody id="pf-metrics"></tbody>
+      </table>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+        <span style="color:#888;font-size:.8rem">指標名稱：cpu、memory、disk 會寫入既有圖表與閾值；其他名稱為自訂指標（小寫英數與底線）。disk 必須使用 STORAGE_TABLE。</span>
+        <button class="btn btn-sm" id="pf-add-metric" onclick="addProfileMetric()">＋ 新增指標</button>
+      </div>
+    </div>
+    <div class="panel" style="margin:0">
+      <div style="display:flex;gap:8px;align-items:center">
+        <span>預覽：</span>
+        <select id="pf-preview-device" class="inline-input" style="min-width:220px"></select>
+        <button class="btn btn-primary btn-sm" id="pf-preview-btn" onclick="previewProfile()">對此設備試算</button>
+        <span style="color:#888;font-size:.8rem">不儲存數值、不產生告警，停用的指標也會試算</span>
+      </div>
+      <table class="metric-table" id="pf-preview" style="display:none;margin-top:8px;box-shadow:none">
+        <thead><tr><th style="width:140px">指標</th><th>結果</th></tr></thead>
+        <tbody id="pf-preview-body"></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="dialog-footer">
+    <button class="btn" onclick="closeDialog('profile-dialog')">取消</button>
+    <button class="btn btn-primary" id="pf-save" onclick="saveProfile()">儲存</button>
+  </div>
+</dialog>
+
+<!-- 加入範本 Dialog（OID 探索） -->
+<dialog id="addmetric-dialog">
+  <div class="dialog-header">加入範本</div>
+  <div class="dialog-body">
+    <label>OID <input type="text" id="am-oid" class="mono"></label>
+    <div class="mono" id="am-sample" style="color:#888"></div>
+    <label>範本
+      <select id="am-profile" onchange="$('am-new-row').style.display = this.value === 'new' ? '' : 'none'"></select>
+    </label>
+    <label id="am-new-row" style="display:none">新範本名稱 * <input type="text" id="am-new-name" maxlength="64"></label>
+    <label>指標名稱 * <input type="text" id="am-key" placeholder="例如 temperature"></label>
+    <label>計算類型
+      <select id="am-kind" onchange="addMetricKindChanged()">
+        <option value="VALUE">VALUE（單一 OID 的值）</option>
+        <option value="HUNDRED_MINUS">HUNDRED_MINUS（100 − 值）</option>
+        <option value="TABLE_AVERAGE">TABLE_AVERAGE（表格欄位平均）</option>
+      </select>
+    </label>
+    <label id="am-scale-row">倍率（選填） <input type="text" id="am-scale" placeholder="例如 0.1"></label>
+    <label>單位 <input type="text" id="am-unit" placeholder="例如 °C、%"></label>
+    <div class="hint" id="am-hint"></div>
+  </div>
+  <div class="dialog-footer">
+    <button class="btn" onclick="closeDialog('addmetric-dialog')">取消</button>
+    <button class="btn btn-primary" onclick="saveAddMetric()">加入</button>
   </div>
 </dialog>
 
@@ -401,6 +493,7 @@ function showTab(name, btn) {
   if (name === 'devices') loadDevices();
   if (name === 'alerts')  loadAlerts();
   if (name === 'discovery') loadDiscovery();
+  if (name === 'profiles') loadProfiles();
   if (name === 'traps')   loadTraps();
   if (name === 'users')   loadUsers();
   if (name === 'tokens') loadTokens();
@@ -426,6 +519,11 @@ function esc(v) {
 // 產生可安全放入 onclick="..." 屬性的 JS 參數（JSON 字面值再做 HTML 跳脫）
 function jsArg(v) { return esc(JSON.stringify(v)); }
 
+// 數值顯示：最多兩位小數，去掉多餘的 0
+function fmtNum(v) {
+  return typeof v === 'number' ? String(Math.round(v * 100) / 100) : String(v ?? '');
+}
+
 function pctBar(pct) {
   const p = pct.toFixed(1);
   const color = pct >= 90 ? '#e53935' : pct >= 75 ? '#fb8c00' : '#43a047';
@@ -438,12 +536,14 @@ async function loadStatus() {
     { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' })
     .then(r => r.json()).catch(() => []);
   const tb = $('status-body');
-  if (!data.length) { tb.innerHTML = '<tr><td colspan="4" style="color:#aaa">尚無資料</td></tr>'; return; }
+  if (!data.length) { tb.innerHTML = '<tr><td colspan="5" style="color:#aaa">尚無資料</td></tr>'; return; }
   tb.innerHTML = data.map(d => `<tr>
     <td><strong>${esc(d.deviceName)}</strong></td>
     <td>${d.cpu ? pctBar(d.cpu.usedPct) : '—'}</td>
     <td>${d.memory ? pctBar(d.memory.usedPct) : '—'}</td>
     <td>${d.disks && d.disks.length ? d.disks.map(k => `${esc(k.mountPoint)} ${pctBar(k.usedPct)}`).join('<br>') : '—'}</td>
+    <td>${d.custom && d.custom.length ? d.custom.map(c =>
+          `<span title="${esc(fmtTime(c.ts))}">${esc(c.metricKey)}：<strong>${esc(fmtNum(c.value))}</strong> ${esc(c.unit)}</span>`).join('<br>') : '—'}</td>
   </tr>`).join('');
 }
 
@@ -453,12 +553,13 @@ async function loadDevices() {
     { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' })
     .then(r => r.json()).catch(() => []);
   const tb = $('devices-body');
-  if (!data.length) { tb.innerHTML = '<tr><td colspan="6" style="color:#aaa">尚無設備</td></tr>'; return; }
+  if (!data.length) { tb.innerHTML = '<tr><td colspan="7" style="color:#aaa">尚無設備</td></tr>'; return; }
   tb.innerHTML = data.map(d => `<tr>
     <td><strong>${esc(d.name)}</strong></td><td>${esc(d.host)}</td><td>${esc(d.port)}</td>
     <td>v${esc(d.snmpVersion || '2c')} ${d.snmpVersion === '3'
           ? `<code>${esc(d.v3User)}</code>`
           : `<code>${esc(d.community)}</code>`}</td>
+    <td>${esc(d.appliedProfileName || '—')}${d.profileId == null ? ' <span class="badge off">自動</span>' : ''}</td>
     <td><span class="badge ${d.enabled ? 'ok' : 'off'}">${d.enabled ? '啟用' : '停用'}</span></td>
     <td>
       <button class="btn btn-sm btn-primary" onclick="openDeviceDialog(${jsArg(d)})">編輯</button>
@@ -467,8 +568,13 @@ async function loadDevices() {
   </tr>`).join('');
 }
 
-function openDeviceDialog(d = null) {
+async function openDeviceDialog(d = null) {
   $('device-dialog-title').textContent = d ? '編輯設備' : '新增設備';
+  const profiles = await fetchProfiles();
+  $('d-profile').innerHTML = '<option value="auto">自動（依 sysObjectID）</option>'
+    + profiles.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+  $('d-profile').value = d && d.profileId != null ? String(d.profileId) : 'auto';
+  $('d-profile-hint').textContent = d && d.appliedProfileName ? `目前：${d.appliedProfileName}` : '';
   $('d-id').value        = d ? d.name : '';    // 儲存原始名稱作為路由識別
   $('d-name').value      = d ? d.name : '';
   $('d-name').disabled   = !!d;                // 編輯時名稱不可更改
@@ -504,7 +610,8 @@ async function saveDevice() {
   const body = { name: $('d-name').value.trim(), host: $('d-host').value.trim(),
                  port: parseInt($('d-port').value), community: $('d-community').value.trim(),
                  retries: parseInt($('d-retries').value), timeoutMs: parseInt($('d-timeout').value),
-                 enabled: $('d-enabled').checked, snmpVersion: $('d-version').value };
+                 enabled: $('d-enabled').checked, snmpVersion: $('d-version').value,
+                 profileId: $('d-profile').value === 'auto' ? null : Number($('d-profile').value) };
   if (!body.name || !body.host) { alert('名稱和 IP 為必填'); return; }
   if (body.snmpVersion === '3') {
     body.v3User         = $('d-v3-user').value.trim();
@@ -656,14 +763,244 @@ async function deleteUnknown(kind, id) {
   loadTraps();
 }
 
-function addDeviceFromSource(ip) {
-  openDeviceDialog();
+async function addDeviceFromSource(ip) {
+  await openDeviceDialog();
   $('d-host').value = ip;
   $('d-name').focus();
   // 儲存後重新整理 Trap 對應分頁（該 IP 會從未登錄來源中移除）
   $('device-dialog').addEventListener('close', () => {
     if ($('tab-traps').classList.contains('active')) loadTraps();
   }, { once: true });
+}
+
+// ─── 監控範本 ────────────────────────────────────────────────
+// 各計算類型需要的參數：[參數名, 說明, 是否選填]
+const KIND_PARAMS = {
+  VALUE:              [['oid', 'OID'], ['scale', '倍率', true]],
+  HUNDRED_MINUS:      [['oid', 'OID']],
+  USED_TOTAL_PERCENT: [['used', '已用 OID'], ['total', '總量 OID'], ['scale', '位元組倍率', true]],
+  USED_FREE_PERCENT:  [['used', '已用 OID'], ['free', '剩餘 OID'], ['scale', '位元組倍率', true]],
+  TABLE_AVERAGE:      [['column', '表格欄位 OID']],
+  STORAGE_TABLE:      [['typeFilter', '儲存類型 OID'], ['entry', 'entry OID', true], ['first', '只取第一列', true]],
+  UCD_MEMORY:         [],
+};
+const KIND_LABELS = {
+  VALUE: '單一 OID 的值（可乘倍率）', HUNDRED_MINUS: '100 − 值（例如 CPU idle）',
+  USED_TOTAL_PERCENT: '已用 ÷ 總量 × 100', USED_FREE_PERCENT: '已用 ÷（已用＋剩餘）× 100',
+  TABLE_AVERAGE: '表格欄位所有列的平均', STORAGE_TABLE: 'hrStorage 格式，依類型逐列算使用率',
+  UCD_MEMORY: 'Net-SNMP 記憶體（UCD-SNMP-MIB）',
+};
+let profileCache = [];
+
+async function fetchProfiles() {
+  profileCache = await fetch('/api/admin/profiles').then(r => r.ok ? r.json() : []).catch(() => []);
+  return profileCache;
+}
+
+async function loadProfiles() {
+  const data = await fetchProfiles();
+  const tb = $('profiles-body');
+  if (!data.length) { tb.innerHTML = '<tr><td colspan="5" style="color:#aaa">尚無範本</td></tr>'; return; }
+  tb.innerHTML = data.map(p => `<tr>
+    <td><strong>${esc(p.name)}</strong> ${p.builtin ? '<span class="badge info">內建</span>' : ''}
+        ${p.description ? `<div style="color:#888;font-size:.8rem">${esc(p.description)}</div>` : ''}</td>
+    <td class="mono">${esc(p.matchPrefix || '—')}</td>
+    <td>${p.metrics.map(m => `<span class="badge ${m.enabled ? 'ok' : 'off'}" title="${esc(m.kind)}">${esc(m.metricKey)}</span>`).join(' ') || '—'}</td>
+    <td>${esc(p.deviceCount)}</td>
+    <td>
+      <button class="btn btn-sm btn-primary" onclick="openProfileDialog(${jsArg(p.id)})">${p.builtin ? '檢視' : '編輯'}</button>
+      <button class="btn btn-sm" onclick="copyProfile(${jsArg(p.id)})">複製</button>
+      ${p.builtin ? '' : `<button class="btn btn-sm btn-danger" onclick="deleteProfile(${jsArg(p.id)}, ${jsArg(p.name)}, ${jsArg(p.deviceCount)})">刪除</button>`}
+    </td>
+  </tr>`).join('');
+}
+
+async function openProfileDialog(id = null) {
+  const p = id == null ? null : profileCache.find(x => x.id === id);
+  const readonly = !!(p && p.builtin);
+  $('profile-dialog-title').textContent = !p ? '新增範本' : readonly ? '檢視內建範本' : '編輯範本';
+  $('pf-id').value     = p ? p.id : '';
+  $('pf-name').value   = p ? p.name : '';
+  $('pf-prefix').value = p ? p.matchPrefix : '';
+  $('pf-desc').value   = p ? p.description : '';
+  $('pf-readonly').style.display = readonly ? '' : 'none';
+  for (const el of ['pf-name', 'pf-prefix', 'pf-desc']) $(el).disabled = readonly;
+  $('pf-save').style.display = readonly ? 'none' : '';
+  $('pf-add-metric').style.display = readonly ? 'none' : '';
+  renderProfileMetrics(p ? p.metrics : [{ metricKey: 'cpu', kind: 'VALUE', params: {}, unit: '%', enabled: true }], readonly);
+  $('pf-preview').style.display = 'none';
+
+  const devices = await fetch('/api/v1/devices',
+    { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' })
+    .then(r => r.json()).catch(() => []);
+  $('pf-preview-device').innerHTML = devices.length
+    ? devices.map(d => `<option value="${esc(d.name)}">${esc(d.name)}（${esc(d.host)}）</option>`).join('')
+    : '<option value="">尚無設備</option>';
+  $('profile-dialog').showModal();
+}
+
+function renderProfileMetrics(metrics, readonly = false) {
+  $('pf-metrics').dataset.readonly = readonly ? '1' : '';
+  $('pf-metrics').innerHTML = metrics.map((m, i) => metricRowHtml(m, i, readonly)).join('');
+}
+
+function metricRowHtml(m, i, readonly) {
+  const dis = readonly ? 'disabled' : '';
+  const params = (KIND_PARAMS[m.kind] || []).map(([key, label, optional]) => `<div class="param-row">
+      <span>${esc(label)}${optional ? '' : ' *'}</span>
+      <input type="text" class="mono" data-param="${esc(key)}" value="${esc((m.params || {})[key] ?? '')}" ${dis}
+             placeholder="${key === 'first' ? 'true / 留空' : ''}">
+    </div>`).join('') || '<span style="color:#888;font-size:.8rem">固定使用 UCD-SNMP-MIB 記憶體 OID，不需參數</span>';
+  return `<tr data-row="${i}">
+    <td><input type="text" data-field="metricKey" value="${esc(m.metricKey)}" ${dis}></td>
+    <td><select data-field="kind" onchange="profileKindChanged(this)" ${dis}>
+      ${Object.keys(KIND_PARAMS).map(k => `<option value="${k}" ${k === m.kind ? 'selected' : ''}>${k}</option>`).join('')}
+    </select><div style="color:#888;font-size:.75rem;margin-top:3px">${esc(KIND_LABELS[m.kind] || '')}</div></td>
+    <td>${params}</td>
+    <td><input type="text" data-field="unit" value="${esc(m.unit)}" ${dis}></td>
+    <td style="text-align:center"><input type="checkbox" data-field="enabled" ${m.enabled ? 'checked' : ''} ${dis}></td>
+    <td>${readonly ? '' : `<button class="btn btn-sm btn-danger" onclick="removeProfileMetric(${i})">✕</button>`}</td>
+  </tr>`;
+}
+
+function collectProfileMetrics() {
+  return [...$('pf-metrics').querySelectorAll('tr[data-row]')].map(tr => {
+    const params = {};
+    tr.querySelectorAll('[data-param]').forEach(inp => { if (inp.value.trim()) params[inp.dataset.param] = inp.value.trim(); });
+    return {
+      metricKey: tr.querySelector('[data-field=metricKey]').value.trim(),
+      kind:      tr.querySelector('[data-field=kind]').value,
+      unit:      tr.querySelector('[data-field=unit]').value.trim(),
+      enabled:   tr.querySelector('[data-field=enabled]').checked,
+      params,
+    };
+  });
+}
+
+function profileKindChanged() {
+  renderProfileMetrics(collectProfileMetrics());
+}
+
+function addProfileMetric() {
+  renderProfileMetrics([...collectProfileMetrics(), { metricKey: '', kind: 'VALUE', params: {}, unit: '', enabled: true }]);
+}
+
+function removeProfileMetric(i) {
+  const metrics = collectProfileMetrics();
+  metrics.splice(i, 1);
+  renderProfileMetrics(metrics);
+}
+
+function profileBody() {
+  return { name: $('pf-name').value.trim(), matchPrefix: $('pf-prefix').value.trim(),
+           description: $('pf-desc').value.trim(), metrics: collectProfileMetrics() };
+}
+
+async function saveProfile() {
+  const id = $('pf-id').value;
+  const body = profileBody();
+  if (!body.name) { alert('名稱為必填'); return; }
+  const res = await fetch(id ? `/api/admin/profiles/${encodeURIComponent(id)}` : '/api/admin/profiles',
+    { method: id ? 'PUT' : 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) { closeDialog('profile-dialog'); loadProfiles(); }
+  else alert(data.error || '儲存失敗');
+}
+
+async function previewProfile() {
+  const deviceName = $('pf-preview-device').value;
+  if (!deviceName) { alert('請先新增設備'); return; }
+  const btn = $('pf-preview-btn');
+  btn.disabled = true;
+  $('pf-preview').style.display = '';
+  $('pf-preview-body').innerHTML = '<tr><td colspan="2" style="color:#aaa">查詢中...</td></tr>';
+  try {
+    const res = await fetch('/api/admin/profiles/preview', { method: 'POST',
+      headers: {'Content-Type':'application/json'}, body: JSON.stringify({ deviceName, profile: profileBody() }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('pf-preview-body').innerHTML = `<tr><td colspan="2" class="err-text">${esc(data.error || '預覽失敗')}</td></tr>`;
+      return;
+    }
+    $('pf-preview-body').innerHTML = data.results.map(r => `<tr>
+      <td><strong>${esc(r.metricKey)}</strong> ${r.enabled ? '' : '<span class="badge off">停用</span>'}</td>
+      <td>${r.ok
+          ? (r.values.length ? r.values.map(v => `${v.instance != null ? `<span class="mono">${esc(v.instance)}</span>：` : ''}<strong>${esc(fmtNum(v.value))}</strong> ${esc(r.unit)}`).join('<br>')
+                             : '<span style="color:#888">沒有符合的資料列</span>')
+          : `<span class="err-text">${esc(r.error)}</span>`}</td>
+    </tr>`).join('') || '<tr><td colspan="2" style="color:#aaa">範本沒有指標</td></tr>';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function copyProfile(id) {
+  const res = await fetch(`/api/admin/profiles/${encodeURIComponent(id)}/copy`, { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) { await loadProfiles(); openProfileDialog(data.id); }
+  else alert(data.error || '複製失敗');
+}
+
+async function deleteProfile(id, name, deviceCount) {
+  const extra = deviceCount ? `\n目前有 ${deviceCount} 台設備套用此範本，刪除後手動指定的設備會改回自動。` : '';
+  if (!confirm(`確定要刪除範本「${name}」嗎？${extra}`)) return;
+  const res = await fetch(`/api/admin/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) loadProfiles();
+  else alert(data.error || '刪除失敗');
+}
+
+// ── 從 OID 探索加入範本 ──
+async function openAddMetricDialog(o) {
+  const profiles = (await fetchProfiles()).filter(p => !p.builtin);
+  $('am-profile').innerHTML = profiles.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')
+    + '<option value="new">（新增範本…）</option>';
+  $('am-profile').value = profiles.length ? String(profiles[0].id) : 'new';
+  $('am-new-row').style.display = profiles.length ? 'none' : '';
+  $('am-new-name').value = '';
+  $('am-oid').value      = o.oid;
+  $('am-oid').dataset.original = o.oid;
+  $('am-sample').textContent = `${o.type}：${o.value}`;
+  $('am-key').value   = '';
+  $('am-kind').value  = 'VALUE';
+  $('am-scale').value = '';
+  $('am-unit').value  = '';
+  $('am-hint').textContent = profiles.length ? '' : '目前沒有自訂範本；內建範本不可修改，可在此建立新範本或先到「監控範本」複製內建範本。';
+  addMetricKindChanged();
+  $('addmetric-dialog').showModal();
+}
+
+function addMetricKindChanged() {
+  const kind = $('am-kind').value, oid = $('am-oid').dataset.original || '';
+  $('am-scale-row').style.display = kind === 'VALUE' ? '' : 'none';
+  // 表格欄位平均：預設帶入去掉最後一段 index 的欄位 OID
+  $('am-oid').value = kind === 'TABLE_AVERAGE' ? oid.replace(/\.\d+$/, '') : oid;
+}
+
+async function saveAddMetric() {
+  const kind = $('am-kind').value, oid = $('am-oid').value.trim();
+  const metric = { metricKey: $('am-key').value.trim(), kind, unit: $('am-unit').value.trim(), enabled: true,
+                   params: kind === 'TABLE_AVERAGE' ? { column: oid } : { oid } };
+  if (kind === 'VALUE' && $('am-scale').value.trim()) metric.params.scale = $('am-scale').value.trim();
+  if (!metric.metricKey) { alert('指標名稱為必填'); return; }
+
+  let res;
+  if ($('am-profile').value === 'new') {
+    const name = $('am-new-name').value.trim();
+    if (!name) { alert('新範本名稱為必填'); return; }
+    res = await fetch('/api/admin/profiles', { method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ name, metrics: [metric] }) });
+  } else {
+    const p = profileCache.find(x => String(x.id) === $('am-profile').value);
+    if (p.metrics.some(m => m.metricKey === metric.metricKey)) { alert(`範本「${p.name}」已有指標 ${metric.metricKey}`); return; }
+    res = await fetch(`/api/admin/profiles/${encodeURIComponent(p.id)}`, { method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ name: p.name, description: p.description, matchPrefix: p.matchPrefix,
+                             metrics: [...p.metrics, metric] }) });
+  }
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) { closeDialog('addmetric-dialog'); alert(`已加入指標 ${metric.metricKey}`); }
+  else alert(data.error || '加入失敗');
 }
 
 // ─── OID 探索 ────────────────────────────────────────────────
@@ -771,8 +1108,9 @@ async function loadOids(offset) {
   $('disc-oid-total').textContent = data.total;
   $('disc-oids').innerHTML = data.items.length ? data.items.map(o => `<tr>
       <td class="mono">${esc(o.oid)}</td><td>${esc(o.type)}</td><td class="mono">${esc(o.value)}</td>
+      <td><button class="btn btn-sm" onclick="openAddMetricDialog(${jsArg(o)})">加入範本</button></td>
     </tr>`).join('')
-    : '<tr><td colspan="3" style="color:#aaa">沒有符合的 OID（未勾選「完整走訪」時不會收集 OID 清單）</td></tr>';
+    : '<tr><td colspan="4" style="color:#aaa">沒有符合的 OID（未勾選「完整走訪」時不會收集 OID 清單）</td></tr>';
   const end = Math.min(discOffset + DISC_PAGE, data.total);
   $('disc-page-info').textContent = data.total ? `${discOffset + 1}–${end} / ${data.total}` : '';
   $('disc-prev').disabled = discOffset === 0;
@@ -802,8 +1140,14 @@ async function loadAlerts() {
     <td style="white-space:nowrap">${esc(a.ts.replace('T',' ').substring(0,19))}</td>
     <td>${esc(a.deviceName)}</td><td>${esc(a.metricName)}</td>
     <td class="${a.eventType==='TRIGGERED'?'alert-triggered':'alert-resolved'}">${esc(a.eventType)}</td>
-    <td>${a.value.toFixed(1)}%</td><td>${a.thresholdVal.toFixed(1)}%</td>
+    <td>${esc(fmtAlertValue(a.metricName, a.value))}</td><td>${esc(fmtAlertValue(a.metricName, a.thresholdVal))}</td>
   </tr>`).join('');
+}
+
+// cpu／memory／disk 為百分比，自訂指標顯示原始數值
+function fmtAlertValue(metric, v) {
+  if (typeof v !== 'number') return String(v ?? '');
+  return /^(cpu|memory|disk)(:|$)/.test(metric) ? `${v.toFixed(1)}%` : fmtNum(v);
 }
 
 // ── 帳號管理 ──────────────────────────────────────────────────────

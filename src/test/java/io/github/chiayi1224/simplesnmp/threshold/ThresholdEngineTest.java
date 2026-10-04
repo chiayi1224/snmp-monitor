@@ -8,7 +8,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import org.mockito.ArgumentCaptor;
+
 import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.startsWith;
@@ -144,5 +148,59 @@ class ThresholdEngineTest {
         engine.evaluateDisks("Server-01", disks); // disk triggerCount=2
 
         verify(store, times(1)).saveAlertEvent(any()); // 只有 / 觸發
+    }
+
+    // ─── 自訂指標 ─────────────────────────────────────────────────
+
+    @Test
+    void evaluate_自訂HIGH方向連續達標才觸發() {
+        when(store.loadThresholdConfig("temperature")).thenReturn(new ThresholdConfig.Builder("temperature")
+            .threshold(70).rearmValue(65).triggerCount(3).rearmCount(2).build());
+
+        engine.evaluate("SW-01", "temperature", 75);
+        engine.evaluate("SW-01", "temperature", 75);
+        verify(store, never()).saveAlertEvent(any());
+        engine.evaluate("SW-01", "temperature", 75);
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(store).saveAlertEvent(captor.capture());
+        assertEquals(AlertEvent.Type.TRIGGERED, captor.getValue().getType());
+        assertEquals("temperature", captor.getValue().getMetricName());
+    }
+
+    @Test
+    void evaluate_自訂LOW方向低於門檻觸發_高於恢復值解除() {
+        when(store.loadThresholdConfig("free_ports")).thenReturn(new ThresholdConfig.Builder("free_ports")
+            .direction(ThresholdConfig.Direction.LOW).threshold(5).rearmValue(8).triggerCount(2).rearmCount(2).build());
+
+        engine.evaluate("SW-01", "free_ports", 2);
+        engine.evaluate("SW-01", "free_ports", 2);   // 觸發
+        engine.evaluate("SW-01", "free_ports", 6);   // 已高於觸發值但未達恢復值，不解除
+        engine.evaluate("SW-01", "free_ports", 6);
+        verify(store, times(1)).saveAlertEvent(any());
+        engine.evaluate("SW-01", "free_ports", 9);
+        engine.evaluate("SW-01", "free_ports", 9);   // 解除
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(store, times(2)).saveAlertEvent(captor.capture());
+        assertEquals(AlertEvent.Type.TRIGGERED, captor.getAllValues().get(0).getType());
+        assertEquals(AlertEvent.Type.RESOLVED,  captor.getAllValues().get(1).getType());
+    }
+
+    @Test
+    void evaluate_沒有閾值只略過不告警() {
+        when(store.loadThresholdConfig("uptime_days")).thenReturn(null);
+        for (int i = 0; i < 5; i++) engine.evaluate("SW-01", "uptime_days", 999);
+        verify(store, never()).saveAlertEvent(any());
+    }
+
+    @Test
+    void 閾值修改後下次評估立即生效() {
+        engine.evaluateCpu("Server-01", 85.0);
+        engine.evaluateCpu("Server-01", 85.0);   // 原本 90% 不超標
+        when(store.loadThresholdConfig("cpu")).thenReturn(new ThresholdConfig.Builder("cpu")
+            .threshold(80).rearmValue(70).triggerCount(1).rearmCount(1).build());
+        engine.evaluateCpu("Server-01", 85.0);
+        verify(store, times(1)).saveAlertEvent(any());
     }
 }
