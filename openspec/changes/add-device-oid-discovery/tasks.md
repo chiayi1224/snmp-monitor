@@ -2,8 +2,8 @@
 
 ## 1. SNMPv3 協定擴充
 
-- [ ] 1.1 `V3UserConfig` 的 `AuthProtocol` 加入 SHA224／SHA256／SHA384／SHA512、`PrivProtocol` 加入 AES192／AES256，並提供大小寫不敏感的字串解析（未知值回預設並記錄警告）；驗證：`V3UserConfigTest` 新增各協定 OID 對照與解析測試通過
-- [ ] 1.2 `V3UserRepository.toConfig` 改用 1.1 的解析；驗證：`TrapReceiverEndToEndTest` 新增 SHA-256／AES-256 的 v3 Trap 案例並通過
+- [x] 1.1 `V3UserConfig` 的 `AuthProtocol` 加入 SHA224／SHA256／SHA384／SHA512、`PrivProtocol` 加入 AES192／AES256，並提供大小寫不敏感的字串解析（未知值回預設並記錄警告）；驗證：`V3UserConfigTest` 新增各協定 OID 對照與解析測試通過
+- [x] 1.2 `V3UserRepository.toConfig` 改用 1.1 的解析；驗證：`TrapReceiverEndToEndTest` 新增 SHA-256／AES-256 的 v3 Trap 案例並通過
 
 ## 2. 設備 SNMP 連線設定（device-snmp-access）
 
