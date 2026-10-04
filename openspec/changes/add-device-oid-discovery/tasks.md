@@ -40,5 +40,5 @@
 
 ## 6. 整合檢查
 
-- [ ] 6.1 `mvn -B clean verify` 與 `./test.sh --skip-build` 全數通過，CI 綠燈
+- [x] 6.1 `mvn -B clean verify` 與 `./test.sh --skip-build` 全數通過，CI 綠燈
 - [ ] 6.2 以真實設備（至少一台 Linux Net-SNMP 與一台網路設備）實測 v2c／v3 輪詢與掃描，記錄結果於 PR 說明（需使用者在有設備的環境執行）
