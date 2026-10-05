@@ -31,7 +31,8 @@ final class UserRepository {
         try {
             if (db.queryLong("SELECT COUNT(*) FROM users") == 0) {
                 add("admin", "admin", "admin", true);
-                log.warn("已建立預設帳號 admin/admin，請登入後立即修改密碼！");
+                // 初始密碼固定並記載於 README，不寫入 log
+                log.warn("已建立預設管理員帳號 admin（初始密碼見 README），首次登入須修改密碼！");
             }
         } catch (SQLException ex) {
             log.error("seedDefaultAdmin 失敗: {}", ex.getMessage());
