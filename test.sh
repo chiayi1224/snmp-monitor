@@ -177,6 +177,10 @@ call POST /api/auth/login -d '{"username":"admin","password":"admin"}'
 assert_status "首次登入回 202 mustChange" 202
 assert_contains "回應含 mustChange:true" '"mustChange" : true'
 
+# 3.3b must_change session 伺服器端把關：未改密碼前不得呼叫其他管理 API
+call POST /api/admin/users -d '{"username":"evil","password":"Evil@123"}'
+assert_status "mustChange 未改密碼前新增帳號回 403" 403
+
 # 3.4 取得 admin id 並改密碼
 call GET /api/auth/me
 ADMIN_ID=$(jq_field '.id')
@@ -185,6 +189,10 @@ log "admin id=$ADMIN_ID"
 
 call PUT "/api/admin/users/${ADMIN_ID}/password" -d '{"password":"Admin@123"}'
 assert_status "修改 admin 密碼" 200
+
+# 3.4b 成功改自己密碼後，同一個 session（未重新登入）must_change 旗標已清除
+call GET /api/admin/users
+assert_status "改密碼後同一 session 列出帳號回 200" 200
 
 # 3.5 用新密碼重新登入
 call POST /api/auth/login -d '{"username":"admin","password":"Admin@123"}'

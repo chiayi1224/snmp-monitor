@@ -19,6 +19,11 @@ import java.util.Set;
  *   /api/admin/*    → 僅 Session（Bearer Token 回 403，管理介面不對外開放）
  *   /api/auth/*     → 僅 Session（login 已在 PUBLIC_PATHS 放行）
  *
+ * 強制改密碼（must_change）：
+ *   帳號若被標記為必須改密碼，其 session 僅視為「半認證」，在伺服器端
+ *   只放行「取得自身帳號」「登出」與「修改自己的密碼」，其餘請求一律拒絕，
+ *   成功修改自己密碼後才清除 must_change 旗標。此把關不可只靠前端導向。
+ *
  * 稽核日誌：
  *   LOGIN_SUCCESS / LOGIN_FAIL / LOGOUT → 由 AuthServlet 記錄
  *   TOKEN_USED / TOKEN_FAIL             → 本 Filter 記錄
@@ -33,10 +38,29 @@ public class AuthFilter implements Filter {
         "/api/info"
     );
 
+    // 修改自己密碼的路徑：PUT /api/admin/users/{id}/password
+    private static final java.util.regex.Pattern OWN_PASSWORD_PATH =
+        java.util.regex.Pattern.compile("^/api/admin/users/(\\d+)/password$");
+
     private final MetricStore store;
 
     public AuthFilter(MetricStore store) {
         this.store = store;
+    }
+
+    /**
+     * 判斷請求是否為「修改自己密碼」：路徑須完全符合 /api/admin/users/{id}/password，
+     * 且 {id} 必須等於 session 中登入帳號的 id（不得改別人的密碼）。
+     */
+    private boolean isOwnPasswordChangePath(String path, Object sessionUserId) {
+        if (path == null || !(sessionUserId instanceof Number)) return false;
+        java.util.regex.Matcher m = OWN_PASSWORD_PATH.matcher(path);
+        if (!m.matches()) return false;
+        try {
+            return Long.parseLong(m.group(1)) == ((Number) sessionUserId).longValue();
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 
     @Override
@@ -109,6 +133,42 @@ public class AuthFilter implements Filter {
             Map<String, Object> user = (Map<String, Object>) session.getAttribute("user");
             String actor = (String) user.get("username");
             request.setAttribute("audit_actor", actor);
+
+            // ── 強制改密碼（must_change）伺服器端強制 ──────────────────
+            // 安全要點：must_change 必須在伺服器端把關，不能只靠前端導向。
+            // 被標記為必須改密碼的 session 僅視為「半認證」，只放行：
+            //   GET  /api/auth/me                       （改密碼頁取得自身帳號）
+            //   POST /api/auth/logout                   （登出）
+            //   PUT  /api/admin/users/{自己id}/password （修改自己的密碼）
+            // 其餘請求一律拒絕，避免預設密碼帳號在未改密碼前即可呼叫其他管理 API。
+            if (Boolean.TRUE.equals(user.get("mustChange"))) {
+                boolean ownPasswordChange = "PUT".equalsIgnoreCase(method)
+                        && isOwnPasswordChangePath(path, user.get("id"));
+                boolean allowed = ownPasswordChange
+                        || ("GET".equalsIgnoreCase(method)  && "/api/auth/me".equals(path))
+                        || ("POST".equalsIgnoreCase(method) && "/api/auth/logout".equals(path));
+                if (!allowed) {
+                    if (path.startsWith("/api/")) {
+                        store.saveAuditLog("MUST_CHANGE_BLOCKED", actor, ip, method, rawUri, 403, "尚未修改預設密碼");
+                        sendError(response, 403, "請先修改預設密碼後再使用其他功能");
+                    } else {
+                        response.sendRedirect("/change-password.html");
+                    }
+                    return;
+                }
+                if (ownPasswordChange) {
+                    store.saveAuditLog("API_WRITE", actor, ip, method, rawUri, 200, null);
+                }
+                chain.doFilter(req, res);
+                // 僅在成功修改自己密碼後，才清除 session 的 must_change 旗標
+                if (ownPasswordChange && response.getStatus() >= 200 && response.getStatus() < 300) {
+                    Map<String, Object> cleared = new java.util.LinkedHashMap<>(user);
+                    cleared.put("mustChange", Boolean.FALSE);
+                    session.setAttribute("user", cleared);
+                }
+                return;
+            }
+
             // 記錄 admin 寫入操作
             if (!"GET".equalsIgnoreCase(method) && path.startsWith("/api/admin/")) {
                 store.saveAuditLog("API_WRITE", actor, ip, method, rawUri, 200, null);

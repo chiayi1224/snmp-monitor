@@ -231,4 +231,134 @@ class AuthFilterTest {
         verify(chain, never()).doFilter(req, resp);
         verify(store, never()).validateApiToken(anyString());
     }
+
+    // ─── 強制改密碼（must_change）伺服器端強制 ─────────────────────
+    // must_change 旗標過去只靠前端導向把關；伺服器端必須把 must_change session
+    // 視為「半認證」：只放行取得自身帳號、登出與修改自己密碼，其餘一律拒絕。
+
+    /** 建立一個標記為 must_change 的 session user（可變 Map，供清除旗標使用） */
+    private java.util.Map<String, Object> mustChangeUser(long id) {
+        java.util.Map<String, Object> user = new java.util.LinkedHashMap<>();
+        user.put("id", id);
+        user.put("username", "admin");
+        user.put("role", "admin");
+        user.put("mustChange", Boolean.TRUE);
+        return user;
+    }
+
+    @Test
+    void mustChange存取其他admin_API回403() throws Exception {
+        stubPath("/api/admin/users");
+        when(req.getMethod()).thenReturn("GET");
+        when(req.getSession(false)).thenReturn(session);
+        when(session.getAttribute("user")).thenReturn(mustChangeUser(1));
+        when(resp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_FORBIDDEN);
+        verify(chain, never()).doFilter(req, resp);
+    }
+
+    @Test
+    void mustChange新增帳號回403_即攻擊情境被擋() throws Exception {
+        // 攻擊情境：忽略 202，直接用 cookie 呼叫 POST /api/admin/users 建立第二個 admin
+        stubPath("/api/admin/users");
+        when(req.getMethod()).thenReturn("POST");
+        when(req.getSession(false)).thenReturn(session);
+        when(session.getAttribute("user")).thenReturn(mustChangeUser(1));
+        when(resp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_FORBIDDEN);
+        verify(chain, never()).doFilter(req, resp);
+    }
+
+    @Test
+    void mustChange取得自身帳號放行() throws Exception {
+        stubPath("/api/auth/me");
+        when(req.getMethod()).thenReturn("GET");
+        when(req.getSession(false)).thenReturn(session);
+        when(session.getAttribute("user")).thenReturn(mustChangeUser(1));
+
+        filter.doFilter(req, resp, chain);
+
+        verify(chain).doFilter(req, resp);
+    }
+
+    @Test
+    void mustChange登出放行() throws Exception {
+        stubPath("/api/auth/logout");
+        when(req.getMethod()).thenReturn("POST");
+        when(req.getSession(false)).thenReturn(session);
+        when(session.getAttribute("user")).thenReturn(mustChangeUser(1));
+
+        filter.doFilter(req, resp, chain);
+
+        verify(chain).doFilter(req, resp);
+    }
+
+    @Test
+    void mustChange存取頁面導向改密碼頁() throws Exception {
+        stubPath("/index.html");
+        when(req.getMethod()).thenReturn("GET");
+        when(req.getSession(false)).thenReturn(session);
+        when(session.getAttribute("user")).thenReturn(mustChangeUser(1));
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).sendRedirect("/change-password.html");
+        verify(chain, never()).doFilter(req, resp);
+    }
+
+    @Test
+    void mustChange改別人密碼回403() throws Exception {
+        // session user id=1，卻嘗試改 id=2 的密碼 → 必須被擋
+        stubPath("/api/admin/users/2/password");
+        when(req.getMethod()).thenReturn("PUT");
+        when(req.getSession(false)).thenReturn(session);
+        when(session.getAttribute("user")).thenReturn(mustChangeUser(1));
+        when(resp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_FORBIDDEN);
+        verify(chain, never()).doFilter(req, resp);
+    }
+
+    @Test
+    void mustChange成功改自己密碼_放行並清除旗標() throws Exception {
+        java.util.Map<String, Object> user = mustChangeUser(1);
+        stubPath("/api/admin/users/1/password");
+        when(req.getMethod()).thenReturn("PUT");
+        when(req.getSession(false)).thenReturn(session);
+        when(session.getAttribute("user")).thenReturn(user);
+        when(resp.getStatus()).thenReturn(200);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(chain).doFilter(req, resp);
+        // 成功後必須把更新為 mustChange=false 的 user 寫回 session
+        org.mockito.ArgumentCaptor<Object> captor = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(session).setAttribute(eq("user"), captor.capture());
+        @SuppressWarnings("unchecked")
+        java.util.Map<String, Object> saved = (java.util.Map<String, Object>) captor.getValue();
+        org.junit.jupiter.api.Assertions.assertEquals(Boolean.FALSE, saved.get("mustChange"));
+    }
+
+    @Test
+    void mustChange改密碼失敗_旗標維持不清除() throws Exception {
+        stubPath("/api/admin/users/1/password");
+        when(req.getMethod()).thenReturn("PUT");
+        when(req.getSession(false)).thenReturn(session);
+        when(session.getAttribute("user")).thenReturn(mustChangeUser(1));
+        when(resp.getStatus()).thenReturn(400);
+
+        filter.doFilter(req, resp, chain);
+
+        verify(chain).doFilter(req, resp);
+        // 改密碼未成功（400），不得清除 must_change 旗標
+        verify(session, never()).setAttribute(eq("user"), any());
+    }
 }
