@@ -27,3 +27,6 @@ Thumbs.db
 
 # Maven shade plugin 產生
 dependency-reduced-pom.xml
+
+# 本機文件／報告（不納入版控、不上傳）
+docs/
