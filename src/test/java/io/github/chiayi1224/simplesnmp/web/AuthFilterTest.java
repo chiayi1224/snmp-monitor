@@ -361,4 +361,55 @@ class AuthFilterTest {
         // 改密碼未成功（400），不得清除 must_change 旗標
         verify(session, never()).setAttribute(eq("user"), any());
     }
+
+    // ─── 已撤銷的 session 強制登出 ─────────────────────────────────
+
+    @Test
+    void 被撤銷的session呼叫API_回401並登出() throws Exception {
+        SessionRevocation revocation = new SessionRevocation();
+        AuthFilter f = new AuthFilter(store, revocation);
+        revocation.revokeUser(2L);
+        stubPath("/api/admin/devices");
+        when(req.getMethod()).thenReturn("GET");
+        when(req.getSession(false)).thenReturn(session);
+        when(session.getAttribute("user")).thenReturn(Map.of("id", 2L, "username", "bob", "role", "admin"));
+        when(resp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+
+        f.doFilter(req, resp, chain);
+
+        verify(session).invalidate();
+        verify(resp).setStatus(401);
+        verify(chain, never()).doFilter(req, resp);
+    }
+
+    @Test
+    void 被撤銷的session開頁面_導回登入頁() throws Exception {
+        SessionRevocation revocation = new SessionRevocation();
+        AuthFilter f = new AuthFilter(store, revocation);
+        revocation.revokeUser(2L);
+        stubPath("/index.html");
+        when(req.getSession(false)).thenReturn(session);
+        when(session.getAttribute("user")).thenReturn(Map.of("id", 2L, "username", "bob", "role", "admin"));
+
+        f.doFilter(req, resp, chain);
+
+        verify(session).invalidate();
+        verify(resp).sendRedirect("/login.html");
+        verify(chain, never()).doFilter(req, resp);
+    }
+
+    @Test
+    void 其他帳號被撤銷_不影響本session() throws Exception {
+        SessionRevocation revocation = new SessionRevocation();
+        AuthFilter f = new AuthFilter(store, revocation);
+        revocation.revokeUser(2L);
+        stubPath("/index.html");
+        when(req.getSession(false)).thenReturn(session);
+        when(session.getAttribute("user")).thenReturn(Map.of("id", 1L, "username", "admin", "role", "admin"));
+
+        f.doFilter(req, resp, chain);
+
+        verify(session, never()).invalidate();
+        verify(chain).doFilter(req, resp);
+    }
 }

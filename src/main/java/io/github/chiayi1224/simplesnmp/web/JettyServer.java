@@ -83,15 +83,17 @@ public class JettyServer {
         ctx.setContextPath("/");
 
         // ── 認證 Filter ────────────────────────────────────────────
+        // Filter、登入與帳號管理共用同一份 session 撤銷登記（強制踢出）
+        SessionRevocation revocation = new SessionRevocation();
         ctx.addFilter(
-            new FilterHolder(new AuthFilter(store)),
+            new FilterHolder(new AuthFilter(store, revocation)),
             "/*",
             EnumSet.of(DispatcherType.REQUEST)
         );
 
         // ── 公開 API ──────────────────────────────────────────────
         ctx.addServlet(new ServletHolder(new InfoServlet()),                   "/api/info");
-        ctx.addServlet(new ServletHolder(new AuthServlet(store)),              "/api/auth/*");
+        ctx.addServlet(new ServletHolder(new AuthServlet(store, revocation)),  "/api/auth/*");
 
         // ── v1 外部 API（POST only，Session 或 Bearer Token）─────
         ctx.addServlet(new ServletHolder(new V1StatusServlet(store)),          "/api/v1/status");
@@ -100,7 +102,7 @@ public class JettyServer {
 
         // ── Admin API（Session 限定）──────────────────────────────
         ctx.addServlet(new ServletHolder(new DeviceServlet(store, trapReceiver)),       "/api/admin/devices/*");
-        ctx.addServlet(new ServletHolder(new UserServlet(store)),                       "/api/admin/users/*");
+        ctx.addServlet(new ServletHolder(new UserServlet(store, revocation)),           "/api/admin/users/*");
         ctx.addServlet(new ServletHolder(new TrapMappingServlet(store, trapReceiver)),  "/api/admin/trap-mappings/*");
         ctx.addServlet(new ServletHolder(new UnknownTrapServlet(store)),                "/api/admin/unknown-traps/*");
         ctx.addServlet(new ServletHolder(new SettingsServlet(store)),                   "/api/admin/settings/*");

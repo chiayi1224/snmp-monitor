@@ -1,9 +1,11 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
+import io.github.chiayi1224.simplesnmp.web.SessionRevocation;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 
 import java.io.IOException;
 import java.util.Map;
@@ -11,18 +13,30 @@ import java.util.Map;
 /**
  * 帳號管理 API（需要登入才能使用）
  *
- *   GET    /api/users           — 取得所有帳號
- *   POST   /api/users           — 新增帳號
- *   PUT    /api/users/{id}      — 修改帳號（含停用）
- *   PUT    /api/users/{id}/password — 修改密碼
- *   DELETE /api/users/{id}      — 刪除帳號
+ *   GET    /api/users               — 取得所有帳號
+ *   POST   /api/users               — 新增帳號（僅限 admin）
+ *   PUT    /api/users/{id}          — 修改帳號（含停用；僅限 admin，不能改自己的角色或停用自己）
+ *   PUT    /api/users/{id}/password — 修改密碼（自己改自己：清除強制改密碼；
+ *                                     admin 改他人：設定強制改密碼並踢出該帳號；非 admin 改他人：403）
+ *   DELETE /api/users/{id}          — 刪除帳號（僅限 admin，不能刪除自己）
+ *
+ * 修改、重設密碼或刪除「他人」帳號時，會撤銷該帳號目前所有 session（強制踢出），
+ * 讓角色、停用與密碼變更立即生效；自己改自己的密碼不踢出。
  */
 public class UserServlet extends BaseJsonServlet {
 
-    private final MetricStore store;
+    private static final String ADMIN_ROLE = "admin";
+
+    private final MetricStore       store;
+    private final SessionRevocation revocation;
 
     public UserServlet(MetricStore store) {
-        this.store = store;
+        this(store, new SessionRevocation());
+    }
+
+    public UserServlet(MetricStore store, SessionRevocation revocation) {
+        this.store      = store;
+        this.revocation = revocation;
     }
 
     @Override
@@ -37,12 +51,14 @@ public class UserServlet extends BaseJsonServlet {
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         try {
+            if (requireAdmin(req, resp, "只有管理員可以新增帳號") == null) return;
+
             JsonNode body    = parseBody(req, resp);
             if (body == null) return;
 
             String username  = requireText(body, "username", resp); if (username == null) return;
             String password  = requireText(body, "password", resp); if (password == null) return;
-            String role      = optText(body, "role", "admin");
+            String role      = optText(body, "role", ADMIN_ROLE);
 
             if (password.length() < 6) {
                 writeError(resp, 400, "密碼長度至少 6 字元");
@@ -67,6 +83,18 @@ public class UserServlet extends BaseJsonServlet {
             if (id < 0) { writeError(resp, 400, "缺少 ID"); return; }
             boolean changePassword = parts.length >= 2 && "password".equals(parts[1]);
 
+            Map<String, Object> actor = requireLogin(req, resp);
+            if (actor == null) return;
+            boolean self    = actorId(actor) == id;
+            boolean isAdmin = ADMIN_ROLE.equals(actor.get("role"));
+
+            // 改自己的密碼任何人皆可；其餘（改他人密碼、修改帳號資料）僅限 admin
+            if (!(changePassword && self) && !isAdmin) {
+                writeError(resp, 403, changePassword ? "只有管理員可以修改其他帳號的密碼"
+                                                     : "只有管理員可以修改帳號");
+                return;
+            }
+
             JsonNode body = parseBody(req, resp);
             if (body == null) return;
 
@@ -77,14 +105,32 @@ public class UserServlet extends BaseJsonServlet {
                     writeError(resp, 400, "密碼長度至少 6 字元");
                     return;
                 }
-                store.changePassword(id, newPassword);
-                writeJson(resp, Map.of("message", "密碼已更新"));
+                if (self) {
+                    // 自己改密碼：清除強制改密碼旗標，不踢出
+                    store.changePassword(id, newPassword);
+                    writeJson(resp, Map.of("message", "密碼已更新"));
+                } else {
+                    // 管理員重設他人密碼：該帳號下次登入須自行修改，並踢出其現有 session
+                    store.resetPassword(id, newPassword);
+                    revocation.revokeUser(id);
+                    writeJson(resp, Map.of("message", "密碼已重設，該帳號已被登出，下次登入須修改密碼"));
+                }
             } else {
                 String  username = requireText(body, "username", resp);
                 if (username == null) return;
-                String  role     = optText(body, "role",    "admin");
+                String  role     = optText(body, "role",    ADMIN_ROLE);
                 boolean enabled  = optBool(body, "enabled", true);
+                if (self && !role.equals(actor.get("role"))) {
+                    writeError(resp, 400, "不能變更自己的角色");
+                    return;
+                }
+                if (self && !enabled) {
+                    writeError(resp, 400, "不能停用自己的帳號");
+                    return;
+                }
                 store.updateUser(id, username, role, enabled);
+                // 修改他人帳號（角色、停用、名稱）後踢出其現有 session，讓變更立即生效
+                if (!self) revocation.revokeUser(id);
                 writeJson(resp, Map.of("message", "更新成功"));
             }
         } catch (Exception e) {
@@ -97,10 +143,52 @@ public class UserServlet extends BaseJsonServlet {
         try {
             long id = pathId(req);
             if (id < 0) { writeError(resp, 400, "缺少 ID"); return; }
+            Map<String, Object> actor = requireAdmin(req, resp, "只有管理員可以刪除帳號");
+            if (actor == null) return;
+            if (actorId(actor) == id) {
+                writeError(resp, 400, "不能刪除自己的帳號");
+                return;
+            }
             store.deleteUser(id);
+            revocation.revokeUser(id);
             writeJson(resp, Map.of("message", "刪除成功"));
         } catch (Exception e) {
             writeError(resp, 500, e.getMessage());
         }
+    }
+
+    /** 取得登入使用者；未登入時回 401 並回傳 null */
+    private Map<String, Object> requireLogin(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        Map<String, Object> actor = sessionUser(req);
+        if (actor == null || !(actor.get("id") instanceof Number)) {
+            writeError(resp, 401, "未登入");
+            return null;
+        }
+        return actor;
+    }
+
+    /** 取得登入的 admin 使用者；未登入回 401、非 admin 回 403，並回傳 null */
+    private Map<String, Object> requireAdmin(HttpServletRequest req, HttpServletResponse resp,
+                                             String forbiddenMessage) throws IOException {
+        Map<String, Object> actor = requireLogin(req, resp);
+        if (actor == null) return null;
+        if (!ADMIN_ROLE.equals(actor.get("role"))) {
+            writeError(resp, 403, forbiddenMessage);
+            return null;
+        }
+        return actor;
+    }
+
+    private static long actorId(Map<String, Object> actor) {
+        return ((Number) actor.get("id")).longValue();
+    }
+
+    /** 取得目前 Session 的登入使用者；未登入回傳 null */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> sessionUser(HttpServletRequest req) {
+        HttpSession session = req.getSession(false);
+        if (session == null) return null;
+        Object user = session.getAttribute("user");
+        return user instanceof Map ? (Map<String, Object>) user : null;
     }
 }

@@ -42,10 +42,16 @@ public class AuthFilter implements Filter {
     private static final java.util.regex.Pattern OWN_PASSWORD_PATH =
         java.util.regex.Pattern.compile("^/api/admin/users/(\\d+)/password$");
 
-    private final MetricStore store;
+    private final MetricStore       store;
+    private final SessionRevocation revocation;
 
     public AuthFilter(MetricStore store) {
-        this.store = store;
+        this(store, new SessionRevocation());
+    }
+
+    public AuthFilter(MetricStore store, SessionRevocation revocation) {
+        this.store      = store;
+        this.revocation = revocation;
     }
 
     /**
@@ -132,6 +138,19 @@ public class AuthFilter implements Filter {
             @SuppressWarnings("unchecked")
             Map<String, Object> user = (Map<String, Object>) session.getAttribute("user");
             String actor = (String) user.get("username");
+
+            // ── 已被撤銷的 session（管理員重設密碼、修改或刪除帳號）強制登出 ──
+            Object uid = user.get("id");
+            if (uid instanceof Number && revocation.isRevoked(((Number) uid).longValue(), session)) {
+                session.invalidate();
+                store.saveAuditLog("SESSION_REVOKED", actor, ip, method, rawUri, 401, "帳號已被管理員變更，session 已撤銷");
+                if (path.startsWith("/api/")) {
+                    sendError(response, 401, "登入已失效，請重新登入");
+                } else {
+                    response.sendRedirect("/login.html");
+                }
+                return;
+            }
             request.setAttribute("audit_actor", actor);
 
             // ── 強制改密碼（must_change）伺服器端強制 ──────────────────

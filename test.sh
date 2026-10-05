@@ -224,6 +224,48 @@ assert_status "帳號空白回 400" 400
 call POST /api/admin/users -d '{"username":"operator","password":"Oper@123"}'
 assert_status "帳號重複回 500" 500
 
+# 5.1 admin 重設他人密碼 → 踢出該帳號現有 session，且下次登入須強制修改密碼
+call GET /api/admin/users
+OPER_ID=$(echo "$BODY" | jq -r '.[] | select(.username=="operator") | .id' 2>/dev/null)
+
+# operator 先在另一個 cookie jar 登入（模擬另一台電腦上已登入的 session）
+OPER_JAR="/tmp/snmp-test-oper-cookies.txt"
+rm -f "$OPER_JAR"
+oper_status() {
+  curl -s -o /dev/null -w '%{http_code}' -b "$OPER_JAR" -c "$OPER_JAR" \
+    -H "Content-Type: application/json" "$@"
+}
+S=$(oper_status -X POST -d '{"username":"operator","password":"Oper@123"}' "${BASE}/api/auth/login")
+[[ "$S" == "200" ]] && ok "operator 另一個 session 登入 (HTTP $S)" || fail "operator 另一個 session 登入 — 實際 HTTP $S"
+
+call PUT "/api/admin/users/${OPER_ID}/password" -d '{"password":"Reset@123"}'
+assert_status "admin 重設 operator 密碼" 200
+assert_contains "重設訊息提示須改密碼" "下次登入須修改密碼"
+
+S=$(oper_status "${BASE}/api/auth/me")
+[[ "$S" == "401" ]] && ok "重設後 operator 原 session 被踢出 (HTTP $S)" || fail "重設後 operator 原 session 被踢出 — 預期 HTTP 401，實際 HTTP $S"
+rm -f "$OPER_JAR"
+
+call POST /api/auth/login -d '{"username":"operator","password":"Reset@123"}'
+assert_status "被重設的帳號登入回 202 mustChange" 202
+
+call PUT "/api/admin/users/${OPER_ID}/password" -d '{"password":"Oper@456"}'
+assert_status "operator 自己改密碼" 200
+
+call GET /api/admin/users
+assert_status "自己改密碼後同一 session 未被踢出" 200
+
+# 5.2 不能刪除自己（目前是 operator 的 session）
+call DELETE "/api/admin/users/${OPER_ID}"
+assert_status "不能刪除自己回 400" 400
+
+call POST /api/auth/login -d '{"username":"operator","password":"Oper@456"}'
+assert_status "自己改密碼後登入不再強制改密碼（200）" 200
+
+# 換回 admin session，後續測試沿用
+call POST /api/auth/login -d '{"username":"admin","password":"Admin@123"}'
+assert_status "切回 admin 登入" 200
+
 # ═════════════════════════════════════════════════════════════════
 section "6. 設備管理 API"
 # ═════════════════════════════════════════════════════════════════

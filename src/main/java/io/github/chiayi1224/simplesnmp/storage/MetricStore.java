@@ -147,6 +147,11 @@ public class MetricStore implements AutoCloseable {
         users.changePassword(id, newPassword);
     }
 
+    /** 管理員重設他人密碼，並設定強制改密碼旗標 */
+    public void resetPassword(long id, String newPassword) throws SQLException {
+        users.resetPassword(id, newPassword);
+    }
+
     /** 更新帳號（不含密碼） */
     public void updateUser(long id, String username, String role, boolean enabled) throws SQLException {
         users.update(id, username, role, enabled);

@@ -123,6 +123,20 @@ class MetricStoreTest {
     }
 
     @Test
+    void resetPassword_可用新密碼登入且設定mustChange旗標() throws SQLException {
+        store.addUser("frank", "oldpass", "admin");
+        Map<String, Object> u = store.authenticate("frank", "oldpass");
+        assertEquals(false, u.get("mustChange"));
+
+        long id = ((Number) u.get("id")).longValue();
+        store.resetPassword(id, "reset123");
+
+        assertNull(store.authenticate("frank", "oldpass"));
+        Map<String, Object> after = store.authenticate("frank", "reset123");
+        assertEquals(true, after.get("mustChange"));
+    }
+
+    @Test
     void updateUser_修改帳號名稱() throws SQLException {
         store.addUser("eve", "pass", "admin");
         Map<String, Object> u = store.authenticate("eve", "pass");

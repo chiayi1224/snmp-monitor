@@ -95,6 +95,13 @@ final class UserRepository {
         log.info("帳號 id={} 密碼已更新，must_change 已清除", id);
     }
 
+    /** 管理員重設他人密碼，並設定強制改密碼旗標（該帳號下次登入須自行修改） */
+    void resetPassword(long id, String newPassword) throws SQLException {
+        String hash = BCrypt.hashpw(newPassword, BCrypt.gensalt());
+        db.update("UPDATE users SET password_hash=?, must_change=1, updated=? WHERE id=?", hash, Db.now(), id);
+        log.info("帳號 id={} 密碼已由管理員重設，must_change 已設定", id);
+    }
+
     /** 更新帳號（不含密碼） */
     void update(long id, String username, String role, boolean enabled) throws SQLException {
         db.update("UPDATE users SET username=?, role=?, enabled=?, updated=? WHERE id=?",

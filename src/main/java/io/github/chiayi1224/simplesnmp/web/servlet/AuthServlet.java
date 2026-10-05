@@ -1,6 +1,7 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
+import io.github.chiayi1224.simplesnmp.web.SessionRevocation;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -21,10 +22,16 @@ import java.util.Map;
  */
 public class AuthServlet extends BaseJsonServlet {
 
-    private final MetricStore store;
+    private final MetricStore       store;
+    private final SessionRevocation revocation;
 
     public AuthServlet(MetricStore store) {
-        this.store = store;
+        this(store, new SessionRevocation());
+    }
+
+    public AuthServlet(MetricStore store, SessionRevocation revocation) {
+        this.store      = store;
+        this.revocation = revocation;
     }
 
     @Override
@@ -64,6 +71,7 @@ public class AuthServlet extends BaseJsonServlet {
             HttpSession session = req.getSession(true);
             session.setAttribute("user", user);
             session.setMaxInactiveInterval(60 * 60);
+            revocation.markLogin(session);
 
             store.saveAuditLog("LOGIN_SUCCESS", username, ip, "POST", "/api/auth/login", 200, null);
 
