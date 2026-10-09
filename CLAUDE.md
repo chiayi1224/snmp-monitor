@@ -56,7 +56,7 @@ JettyServer (8080) ◄───────────────────�
 2. `SnmpPoller` 每次 poll 前都重新從 DB 讀取設備清單與監控範本，因此新增/修改設備或範本無需重啟即生效。
    - 每台設備依套用的監控範本收集指標（見第 6 點）：範本所需 OID 與 sysObjectID 合併一次 GET，sysObjectID 改變時同一週期改用新範本；表格同一子樹只 walk 一次。GET 與計算邏輯在 `profile.ProfileCollector`，Poller 與範本預覽共用。
    - `cpu`／`memory`／`disk` 寫入 `cpu_metrics`／`mem_metrics`／`disk_metrics`，其他指標寫入 `custom_metrics`；單一指標失敗只記警告（每台設備每個指標每小時最多一次），不影響其他指標與設備狀態（GET 完全無回應才是 `SNMP_ERROR`）。
-   - 每台設備可設定 SNMP 版本（`1`／`2c`／`3`）與 v3 認證；舊設備預設 `2c`。設備 API 不回傳 v3 密碼，更新時未帶密碼即沿用舊值。
+   - 每台設備可設定 SNMP 版本（`1`／`2c`／`3`）與 v3 認證；舊設備預設 `2c`。設備 API（`/api/v1/devices`、`/api/admin/devices`）不回傳 community 與 v3 密碼，只回 `communityConfigured`／`v3AuthConfigured`／`v3PrivConfigured`；更新時未帶或留空即沿用舊值（`DeviceRepository.toRow` 不可再加入機密欄位）。
    - 所有對設備的查詢都透過 `snmp.SnmpSession`（`get()`、`walk()`）：使用自己的 `USM`／`SecurityProtocols`，v3 使用者依設備 engine ID 本地化後加入 USM（同名使用者不同密碼不會互相覆蓋），只發出 GET／GETNEXT／GETBULK。v1 的 GET 遇到 `noSuchName` 會移除該 OID 後重送。
    - 測試可用 `src/test/.../snmp/TestSnmpAgent`（記憶體內的 v1/v2c/v3 agent）做端對端驗證，不需要外部設備。
 3. `ThresholdEngine` 使用狀態機（`ThresholdState`）與 hysteresis 防止告警抖動：CPU/記憶體需連續 3 次超標才觸發，磁碟需 2 次；恢復需連續 2 次低於 rearm 值。

@@ -290,6 +290,8 @@ assert_contains "設備清單含 Switch-01" "Switch-01"
 call POST /api/v1/devices/Router-01 -d '{}'
 assert_status "POST 單台設備 Router-01" 200
 assert_contains "單台設備含 host" "192.168.1.1"
+assert_contains "單台設備標示 community 已設定" '"communityConfigured" : true'
+assert_not_contains "回應不含 community 欄位" '"community" :'
 
 call POST /api/v1/devices/NotExists -d '{}'
 assert_status "POST 不存在設備回 404" 404

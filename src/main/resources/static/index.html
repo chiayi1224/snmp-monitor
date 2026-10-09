@@ -602,7 +602,7 @@ async function loadDevices() {
     <td><strong>${esc(d.name)}</strong></td><td>${esc(d.host)}</td><td>${esc(d.port)}</td>
     <td>v${esc(d.snmpVersion || '2c')} ${d.snmpVersion === '3'
           ? `<code>${esc(d.v3User)}</code>`
-          : `<code>${esc(d.community)}</code>`}</td>
+          : '<span style="color:#aaa">community 已設定</span>'}</td>
     <td>${esc(d.appliedProfileName || '—')}${d.profileId == null ? ' <span class="badge off">自動</span>' : ''}</td>
     <td><span class="badge ${d.enabled ? 'ok' : 'off'}">${d.enabled ? '啟用' : '停用'}</span></td>
     <td>
@@ -626,7 +626,8 @@ async function openDeviceDialog(d = null) {
   $('d-port').value      = d ? d.port : 161;
   $('d-retries').value   = d ? d.retries : 2;
   $('d-timeout').value   = d ? d.timeoutMs : 3000;
-  $('d-community').value = d ? d.community : 'public';
+  $('d-community').value = d ? '' : 'public';   // community 不回填；編輯時留空代表沿用原值
+  $('d-community').placeholder = d ? '留空不變更' : '';
   $('d-enabled').checked = d ? d.enabled : true;
   $('d-version').value         = d ? (d.snmpVersion || '2c') : '2c';
   $('d-v3-user').value         = d ? (d.v3User || '') : '';

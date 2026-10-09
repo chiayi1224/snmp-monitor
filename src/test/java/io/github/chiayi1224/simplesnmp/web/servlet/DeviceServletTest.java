@@ -176,6 +176,32 @@ class DeviceServletTest {
         assertTrue(body.contains("更新成功"));
     }
 
+    @Test
+    void POST_更新設備未帶或留空community_沿用舊值() throws Exception {
+        DeviceConfig existing = new DeviceConfig.Builder("Router-01", "10.0.0.1").community("secret").build();
+        when(store.loadDevice("Router-01")).thenReturn(existing);
+        when(store.loadEnabledDevices()).thenReturn(List.of());
+
+        post("/Router-01", "{\"host\":\"10.0.0.99\"}");
+        post("/Router-01", "{\"host\":\"10.0.0.99\",\"community\":\"  \"}");
+
+        ArgumentCaptor<DeviceConfig> captor = ArgumentCaptor.forClass(DeviceConfig.class);
+        verify(store, times(2)).updateDeviceByName(captor.capture(), eq(true));
+        captor.getAllValues().forEach(d -> assertNull(d.getCommunity()));
+    }
+
+    @Test
+    void POST_更新設備帶community_寫入新值() throws Exception {
+        when(store.loadDevice("Router-01")).thenReturn(new DeviceConfig.Builder("Router-01", "10.0.0.1").build());
+        when(store.loadEnabledDevices()).thenReturn(List.of());
+
+        post("/Router-01", "{\"host\":\"10.0.0.99\",\"community\":\"newOne\"}");
+
+        ArgumentCaptor<DeviceConfig> captor = ArgumentCaptor.forClass(DeviceConfig.class);
+        verify(store).updateDeviceByName(captor.capture(), eq(true));
+        assertEquals("newOne", captor.getValue().getCommunity());
+    }
+
     // ─── POST /api/devices/{name}（刪除） ────────────────────────
 
     @Test

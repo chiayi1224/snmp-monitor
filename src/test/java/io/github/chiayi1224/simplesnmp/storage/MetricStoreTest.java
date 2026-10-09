@@ -169,6 +169,28 @@ class MetricStoreTest {
     }
 
     @Test
+    void queryDevice_不回傳community明文() throws SQLException {
+        store.addDevice("Secret", "10.0.0.20", 161, "s3cretCommunity");
+
+        Map<String, Object> dev = store.queryDeviceByName("Secret");
+
+        assertFalse(dev.containsKey("community"));
+        assertEquals(true, dev.get("communityConfigured"));
+        assertFalse(store.queryAllDevices().toString().contains("s3cretCommunity"));
+    }
+
+    @Test
+    void updateDeviceByName_community為null時沿用舊值() throws SQLException {
+        store.addDevice("Keep", "10.0.0.21", 161, "oldCommunity");
+
+        store.updateDeviceByName(new DeviceConfig.Builder("Keep", "10.0.0.22").community(null).build(), true);
+        assertEquals("oldCommunity", store.loadDevice("Keep").getCommunity());
+
+        store.updateDeviceByName(new DeviceConfig.Builder("Keep", "10.0.0.22").community("newCommunity").build(), true);
+        assertEquals("newCommunity", store.loadDevice("Keep").getCommunity());
+    }
+
+    @Test
     void addDevice_重複名稱拋出例外() throws SQLException {
         store.addDevice("SW", "10.0.0.2", 161, "public");
         assertThrows(SQLException.class,

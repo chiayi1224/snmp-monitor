@@ -85,10 +85,10 @@ final class DeviceRepository {
             d.getV3PrivProtocol().name(), nz(d.getV3PrivPassword()), d.getProfileId(), now, now);
     }
 
-    /** 依名稱更新設備；v3 密碼為 null 時沿用資料庫中的舊值 */
+    /** 依名稱更新設備；community 與 v3 密碼為 null 時沿用資料庫中的舊值 */
     void updateByName(DeviceConfig d, boolean enabled) throws SQLException {
         db.update("""
-            UPDATE devices SET host=?, port=?, community=?, enabled=?, retries=?, timeout_ms=?,
+            UPDATE devices SET host=?, port=?, community=COALESCE(?, community), enabled=?, retries=?, timeout_ms=?,
                    snmp_version=?, v3_user=?, v3_auth_protocol=?,
                    v3_auth_password=COALESCE(?, v3_auth_password),
                    v3_priv_protocol=?,
@@ -169,7 +169,6 @@ final class DeviceRepository {
         row.put("name",      rs.getString("name"));
         row.put("host",      rs.getString("host"));
         row.put("port",      rs.getInt("port"));
-        row.put("community", rs.getString("community"));
         row.put("enabled",   Db.bool(rs, "enabled"));
         row.put("retries",   rs.getInt("retries"));
         row.put("timeoutMs", rs.getLong("timeout_ms"));
@@ -177,7 +176,8 @@ final class DeviceRepository {
         row.put("v3User",           rs.getString("v3_user"));
         row.put("v3AuthProtocol",   rs.getString("v3_auth_protocol"));
         row.put("v3PrivProtocol",   rs.getString("v3_priv_protocol"));
-        // 不回傳密碼，只回傳是否已設定
+        // 不回傳 community 與密碼，只回傳是否已設定
+        row.put("communityConfigured", !rs.getString("community").isEmpty());
         row.put("v3AuthConfigured", !rs.getString("v3_auth_password").isEmpty());
         row.put("v3PrivConfigured", !rs.getString("v3_priv_password").isEmpty());
         row.put("profileId",        nullableLong(rs, "profile_id"));

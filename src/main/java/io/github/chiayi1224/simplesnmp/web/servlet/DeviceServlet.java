@@ -39,13 +39,13 @@ import java.util.Map;
  *   "profileId":      3              ← 監控範本；null 代表依 sysObjectID 自動套用，更新時省略代表不變
  * }
  *
- * 回應不包含 v3 密碼，只有 v3AuthConfigured / v3PrivConfigured。
+ * 回應不包含 community 與 v3 密碼，只有 communityConfigured / v3AuthConfigured / v3PrivConfigured。
  *
  * 更新 body（JSON）：
  * {
  *   "host":      "192.168.1.20",
  *   "port":      161,
- *   "community": "private",
+ *   "community": "private",       ← 省略或留空代表沿用舊值
  *   "enabled":   true,
  *   "retries":   2,
  *   "timeoutMs": 3000
@@ -144,12 +144,13 @@ public class DeviceServlet extends BaseJsonServlet {
     /**
      * 由 request body 組出設備設定。
      * 新增時（existing == null）未提供的欄位用預設值；更新時 SNMP 版本與 v3 非密碼欄位未提供則沿用舊值。
+     * community 與 v3 密碼一樣不會由 API 回傳：更新時未提供或留空代表沿用舊值。
      * v3 密碼：欄位不存在 → null（新增時視為未設定、更新時沿用舊值）；存在 → 原值（"" 代表清除）。
      */
     private DeviceConfig parseDevice(JsonNode body, String name, String host, DeviceConfig existing) {
         DeviceConfig.Builder b = new DeviceConfig.Builder(name, host)
             .port     (optInt (body, "port",      161))
-            .community(optText(body, "community", "public"))
+            .community(optText(body, "community", existing != null ? null : "public"))
             .retries  (optInt (body, "retries",   2))
             .timeoutMs(optLong(body, "timeoutMs", 3000L));
 
