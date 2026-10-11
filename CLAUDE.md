@@ -13,7 +13,17 @@ mvn clean compile
 
 # 執行應用程式
 java -jar target/simplesnmp-1.0.0.jar
+
+# 只改後端時略過前端建置（JAR 不含網頁介面）
+mvn package -Dskip.frontend=true
+
+# 前端開發（Vite 開發伺服器 5173，/api 代理到 8080）
+cd frontend && npm install && npm run dev
 ```
+
+`mvn package` 透過 frontend-maven-plugin 下載 Node（`frontend/node/`）、`npm ci`、`npm run build`（`vue-tsc` + `vite build`），結果 `frontend/dist/` 以 resource 打包進 JAR 的 `static/`；`npm run test`（Vitest）於 Maven `test` 階段執行。建置需要網路，執行時完全離線。
+
+**注意：** 使用者的實際資料庫在 `target/snmp_monitor.db`，`mvn clean` 會刪除它；需保留資料時用 `run.sh` 或不加 `clean`。
 
 ## 測試與 CI
 
@@ -28,7 +38,7 @@ mvn test -Dtest=ThresholdEngineTest
 ./test.sh --skip-build
 ```
 
-GitHub Actions（`.github/workflows/ci.yml`）在 push 到 main 與每個 PR 時執行 `mvn -B clean verify` 與 `./test.sh --skip-build`。目前未設定 linting 工具。
+GitHub Actions（`.github/workflows/ci.yml`）在 push 到 main 與每個 PR 時執行 `mvn -B clean verify`（含前端建置與 Vitest）與 `./test.sh --skip-build`。目前未設定 linting 工具；前端以 `vue-tsc` 做型別檢查。
 
 ## Architecture Overview
 
@@ -39,7 +49,7 @@ Maven 座標為 `io.github.chiayi1224:simplesnmp`，Java 根套件為 `io.github
 **主要執行緒與埠口：**
 | 元件 | 類別 | 埠口/行為 |
 |---|---|---|
-| Web Server | `JettyServer` | 8080 (HTTP REST + Static UI) |
+| Web Server | `JettyServer` | 8080 (HTTP REST + Vue 單頁應用) |
 | SNMP Poller | `SnmpPoller` | 每 60 秒輪詢所有啟用設備 |
 | Trap Receiver | `TrapReceiver` | 1162 (SNMP v1/v2c/v3 Trap 接收) |
 | 持久化 | `MetricStore` | SQLite 檔案 `snmp_monitor.db` |
@@ -85,11 +95,20 @@ JettyServer (8080) ◄───────────────────�
 
 ### Web 層
 
-- `AuthFilter` 保護所有路由，僅放行 `/login.html` 與 `/api/auth/login`。
+- Filter 順序：`LocaleFilter`（依 `Accept-Language` 設定本次請求語系）→ `StaticCacheFilter`（`/`、`/index.html` 設 `no-cache`；`/assets/*` 長期快取）→ `AuthFilter`。
+- 網頁介面是 `frontend/` 的 Vue 3 + Naive UI 單頁應用（hash 路由），由 `DefaultServlet` 提供 JAR 內的 `static/`。`AuthFilter` 放行前端外殼（`/`、`/index.html`、`/favicon.ico`、`/assets/*`）與 `/api/auth/login`、`/api/info`；其餘非 API 路徑（含舊的 `/login.html`）未登入時導向 `/`，登入、改密碼畫面由前端路由處理。資料一律經需要認證的 API 取得。
 - Session 超時 1 小時，支援 `must_change` 旗標強制首次登入改密碼；`must_change` 在 `AuthFilter` 伺服器端強制，該 session 只能呼叫 `/api/auth/me`、`/api/auth/logout` 與修改自己的密碼。
 - 帳號管理（`UserServlet`）：新增／修改／刪除帳號與修改他人密碼僅限 `admin`；不能變更自己的角色、停用或刪除自己。admin 重設他人密碼會設定該帳號 `must_change`；自己改密碼則清除。
 - 強制踢出：`SessionRevocation`（記憶體內、遞增序號）由 `JettyServer` 建立並共用給 `AuthFilter`、`AuthServlet`、`UserServlet`。重設他人密碼、修改或刪除他人帳號時撤銷該帳號既有 session，下一個請求回 401（頁面導回登入頁）；自己改密碼不撤銷。
-- 所有 API servlet 繼承 `BaseJsonServlet`，以 Jackson 序列化回應。
+- 所有 API servlet 繼承 `BaseJsonServlet`，以 Jackson 序列化回應；錯誤用 `writeError(resp, status, Msg.of(...))`、成功訊息用 `t("代碼", 參數…)`。
+
+### 多語系（i18n）
+
+- 支援 `zh-TW`（預設）、`zh-CN`、`en`。後端 `i18n` 套件：`Msg`（訊息代碼＋參數）、`Messages`（ResourceBundle `i18n/messages*.properties`、`MessageFormat`，單引號寫成 `''`；不回退 JVM 語系）、`LocaleFilter`（請求語系存 ThreadLocal）、`LocalizedException`／`Localized`（例外帶 `Msg`，`getMessage()` 為英文供 log）。
+- 背景執行緒（輪詢、Trap、掃描）沒有請求語系：存入資料庫的系統文字用 `StoredText.encode(Msg)`（`@i18n:<key>|<JSON 參數>`），API 回應前以 `StoredText.localize` 翻譯（告警 `message`、稽核 `detail`、掃描 `progress`／`error`／探測結果）。舊資料與 Trap VarBind 原文原樣輸出。
+- 內建範本以 `BuiltinProfiles.displayName/displayDescription` 提供翻譯後的 `displayName`；識別用的 `name` 不變。系統設定的 `description` 依 `setting.<key>.description` 翻譯。
+- 前端：`frontend/src/locales/zh-TW.ts` 為基準並推導 `MessageSchema`，`zh-CN.ts`、`en.ts` 缺鍵時 `vue-tsc` 失敗；API 用戶端每個請求帶 `Accept-Language`；切換語言時頁面重新掛載以取得新語言的後端文字。
+- 測試：`MessagesTest`（三份 properties 鍵與參數一致）、`NoHardcodedUserTextTest`（`src/main/java` 不可有中文字串字面值，log 與註解除外）、前端 `i18n.test.ts`。
 
 ### 持久化 (SQLite)
 
@@ -116,7 +135,7 @@ JettyServer (8080) ◄───────────────────�
 
 ## Language Convention
 
-註解、Javadoc 與使用者可見文字（API 錯誤訊息、告警描述、網頁文字）使用**繁體中文**；**log 輸出一律使用英文**。既有的中文 log 在修改該檔案時一併改為英文。
+註解、Javadoc 使用**繁體中文**；**log 輸出一律使用英文**，既有的中文 log 在修改該檔案時一併改為英文。使用者可見文字（API 錯誤訊息、告警描述、網頁文字）一律經由訊息代碼：正體中文寫在 `messages.properties`／`locales/zh-TW.ts`（基準），並同步補上簡體中文與英文。
 
 ## 授權
 

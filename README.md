@@ -11,7 +11,8 @@
 - **閾值告警**：每台設備各自設定 Warning／Critical 兩段閾值，連續超過才觸發、可在等級間升降、連續恢復才解除；沒有預設閾值（參考 OpenNMS 設計）
 - **連線中斷告警**：每台設備可開啟，設備 OFFLINE／SNMP_ERROR 時告警、恢復後自動解除
 - **Trap 告警等級**：每筆 Trap 對應可指定 Warning 或 Critical
-- **Web 管理介面**：設備新增/編輯/停用，修改後下一個 poll 週期立即生效
+- **Web 管理介面**：Vue 3 + Naive UI 單頁應用，設備新增/編輯/停用，修改後下一個 poll 週期立即生效；所有資源打包在 JAR 內，**執行時完全離線**，不連任何外部網址
+- **多語系**：正體中文（預設）、簡體中文、英文；介面、API 訊息與系統產生的告警描述都依使用者語言顯示
 - **帳號管理**：Session 認證、BCrypt 密碼、首次登入強制改密碼
 - **SQLite 儲存**：無需額外資料庫
 
@@ -21,6 +22,7 @@
 |---|---|
 | SNMP | SNMP4J 3.7.x |
 | Web Server | Jetty 11 (embedded) |
+| 網頁介面 | Vue 3、Naive UI、vue-i18n、vue-router（TypeScript，Vite 建置） |
 | 資料庫 | SQLite (sqlite-jdbc) |
 | 密碼 | jBCrypt |
 | JSON | Jackson |
@@ -30,8 +32,9 @@
 
 ### 需求
 
-- Java 11+
+- Java 21+
 - Maven 3.6+
+- 建置時需要網路：Maven 會自動下載 Node.js 並安裝前端套件（不必自行安裝 Node）。執行時不需要網路。
 - Linux Server 上已安裝並啟動 `snmpd`（net-snmp）
 
 ### 建置與執行
@@ -42,6 +45,25 @@ cd snmp-monitor
 mvn package -q
 java -jar target/simplesnmp-1.0.0.jar
 ```
+
+`mvn package` 會一併編譯網頁介面（`frontend/`：下載 Node、`npm ci`、`vite build`），把編譯好的 JS／CSS 打包進 JAR 的 `static/`。部署的機器只需要 Java。
+
+**離線環境部署：** 在可以上網的機器執行 `mvn package`，再把 `target/simplesnmp-1.0.0.jar` 複製到離線環境執行即可；網頁介面所需的程式、樣式、圖示與語系檔都在 JAR 內。若建置機只能連內部鏡像，可加 `-Dnode.download.root=<Node 下載鏡像>/ -Dnpm.registry=<npm 鏡像>/`。
+
+只修改後端時，可加 `-Dskip.frontend=true` 略過前端建置以加快速度（此時產生的 JAR 不含網頁介面）。
+
+### 網頁介面開發
+
+```bash
+java -jar target/simplesnmp-1.0.0.jar   # 先啟動後端（8080）
+cd frontend
+npm install
+npm run dev     # http://localhost:5173，/api 自動轉給 8080
+npm run test    # Vitest 單元測試（語系一致性、API 用戶端、離線檢查）
+npm run build   # 型別檢查 + 建置到 frontend/dist
+```
+
+`frontend/src/views/` 是各功能頁，`components/` 是共用元件與對話框，`api/client.ts` 包裝所有 API 請求（自動帶上 `Accept-Language`、登入失效時導回登入畫面）。
 
 ### 第一次使用
 
@@ -137,11 +159,21 @@ trap2sink 192.168.1.100:1162 trapUser
 執行中備份請用 `sqlite3 snmp_monitor.db ".backup backup.db"`；若直接複製檔案，必須在程式停止後進行，
 或連同 `-wal` 檔一起複製，否則可能遺漏最近寫入的資料。
 
+## 多語系
+
+- **語言決定：** 使用者在登入畫面或頁首選擇的語言（記在瀏覽器）→ 瀏覽器偏好語言（繁體相關 → 正體中文、簡體相關 → 簡體中文、英文 → 英文）→ 正體中文。
+- **API：** 錯誤與成功訊息依請求的 `Accept-Language` 產生（`zh-TW`／`zh-CN`／`en`），未帶或不支援時為正體中文，與舊版相同。外部程式可帶 `Accept-Language: en` 取得英文訊息。
+- **系統產生的文字**（告警描述、稽核說明、OID 掃描進度與探測結果）以訊息代碼存入資料庫，讀取時依語言翻譯；升級前的舊資料原樣顯示。使用者輸入的資料（設備名稱、Trap 對應說明等）不翻譯。
+- **新增文字：**
+  - 前端：`frontend/src/locales/zh-TW.ts`（基準）、`zh-CN.ts`、`en.ts` 三份都要加，缺鍵時型別檢查失敗。
+  - 後端：`src/main/resources/i18n/messages.properties`（正體中文）、`messages_zh_CN.properties`、`messages_en.properties`，程式中以 `Msg.of("代碼", 參數…)` 使用；`MessagesTest` 檢查三份鍵與參數一致，`NoHardcodedUserTextTest` 禁止在程式中直接寫中文字串（log 一律英文）。
+
 ## 專案結構
 
 ```
 src/main/java/io/github/chiayi1224/simplesnmp/
 ├── SnmpMonitor.java           主程式入口
+├── i18n/                      多語系：Msg（訊息代碼）、Messages（依語系產生文字）、LocaleFilter、StoredText
 ├── config/
 │   ├── DeviceConfig.java      設備設定 model
 │   ├── OidConstants.java      OID 常數（CPU/Mem/Disk）
@@ -163,6 +195,7 @@ src/main/java/io/github/chiayi1224/simplesnmp/
 │   └── TrapReceiver.java      v1/v2c/v3 Trap 接收
 └── web/
     ├── AuthFilter.java        Session 認證 Filter
+    ├── StaticCacheFilter.java 前端靜態檔快取標頭
     ├── JettyServer.java       Jetty 啟動
     └── servlet/
         ├── AuthServlet.java   登入/登出 API
@@ -172,6 +205,12 @@ src/main/java/io/github/chiayi1224/simplesnmp/
         ├── V1AlertServlet.java  告警查詢 API
         ├── DeviceThresholdServlet.java 每台設備閾值 API
         └── BaseJsonServlet.java JSON 共用基底
+
+frontend/                      網頁介面（Vue 3 + Naive UI + TypeScript，Vite 建置，打包進 JAR 的 static/）
+├── src/views/                 各功能頁（狀態、設備、OID 探索、範本、Trap、閾值、告警、帳號、Token、稽核、設定）
+├── src/components/            版面、對話框、共用元件
+├── src/locales/               語系檔（zh-TW 為基準、zh-CN、en）
+└── src/api/                   API 用戶端與回應型別
 ```
 
 ## API 端點

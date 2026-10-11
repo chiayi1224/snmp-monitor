@@ -5,7 +5,7 @@
 - **本專案授權：** Apache License 2.0（見 [`LICENSE`](LICENSE)），版權宣告見 [`NOTICE`](NOTICE)。
 - **授權全文：** 見 [`licenses/`](licenses/) 目錄；Apache License 2.0 全文即根目錄的 `LICENSE`。
 - **散布方式：** `mvn package` 產生的可執行 JAR（fat JAR）會把下列「執行期套件」整包打進去。打包時，本文件、`LICENSE`、`NOTICE` 與 `licenses/` 會一併放進 JAR 的 `META-INF/` 目錄。
-- **盤點基準：** `mvn dependency:list`（含遞移相依），以 `pom.xml` 目前版本為準。
+- **盤點基準：** Java 套件以 `mvn dependency:list`（含遞移相依）、`pom.xml` 目前版本為準；網頁前端套件以 Vite 建置時實際打包的模組為準，版本見 `frontend/package-lock.json`。
 
 ---
 
@@ -30,6 +30,47 @@
 | ch.qos.logback:logback-classic | 1.4.11 | EPL-1.0 或 LGPL-2.1（雙授權） | EPL-1.0 |
 | ch.qos.logback:logback-core | 1.4.11 | EPL-1.0 或 LGPL-2.1（雙授權） | EPL-1.0 |
 | org.xerial:sqlite-jdbc | 3.44.1.0 | Apache-2.0；部分程式碼 BSD（Zentus）；內含 SQLite 原生函式庫（公眾領域） | Apache-2.0 / BSD |
+
+### 網頁前端套件（打包進 JAR 的 `static/assets/*.js`）
+
+網頁介面（`frontend/`，Vue 3 + Naive UI）在建置時編譯並打包成 JS／CSS 放進 JAR，以下 npm 套件的程式碼因此隨 JAR 散布。除 `@juggle/resize-observer`（Apache-2.0，未附 NOTICE）外皆為 MIT。各套件的版權與授權全文彙整於 [`licenses/frontend-npm-packages.txt`](licenses/frontend-npm-packages.txt)。
+
+| 套件 | 版本 | 授權 |
+|---|---|---|
+| @css-render/plugin-bem | 0.15.14 | MIT |
+| @css-render/vue3-ssr | 0.15.14 | MIT |
+| @emotion/hash | 0.8.0 | MIT |
+| @intlify/core-base | 11.4.14 | MIT |
+| @intlify/message-compiler | 11.4.14 | MIT |
+| @intlify/shared | 11.4.14 | MIT |
+| @juggle/resize-observer | 3.4.0 | Apache-2.0 |
+| @vicons/ionicons5 | 0.13.0 | MIT |
+| @vue/devtools-api | 6.6.4 | MIT |
+| @vue/devtools-kit | 8.2.1 | MIT |
+| @vue/devtools-shared | 8.2.1 | MIT |
+| @vue/reactivity | 3.5.43 | MIT |
+| @vue/runtime-core | 3.5.43 | MIT |
+| @vue/runtime-dom | 3.5.43 | MIT |
+| @vue/shared | 3.5.43 | MIT |
+| async-validator | 4.2.5 | MIT |
+| birpc | 2.9.0 | MIT |
+| css-render | 0.15.14 | MIT |
+| date-fns | 4.4.0 | MIT |
+| date-fns-tz | 3.2.0 | MIT |
+| evtd | 0.2.4 | MIT |
+| hookable | 5.5.3 | MIT |
+| lodash-es | 4.18.1 | MIT |
+| naive-ui | 2.45.3 | MIT |
+| nostics | 1.3.0 | MIT |
+| perfect-debounce | 2.1.0 | MIT |
+| seemly | 0.3.10 | MIT |
+| treemate | 0.3.11 | MIT |
+| vdirs | 0.1.8 | MIT |
+| vooks | 0.2.12 | MIT |
+| vue | 3.5.43 | MIT |
+| vue-i18n | 11.4.14 | MIT |
+| vue-router | 5.4.0 | MIT |
+| vueuc | 0.4.66 | MIT |
 
 ### 雙授權套件的選擇說明
 
@@ -137,6 +178,9 @@ Copyright (c) 2006, David Crawshaw.  All rights reserved.   （Zentus 原始程�
 | org.objenesis:objenesis | 3.3 | Apache-2.0 |
 | Maven 外掛：surefire 3.2.5、shade 3.5.1 | — | Apache-2.0 |
 | Maven 外掛：jacoco-maven-plugin 0.8.11 | — | EPL-2.0 |
+| Maven 外掛：frontend-maven-plugin 2.0.2、maven-clean-plugin 3.4.0 | — | Apache-2.0 |
+| Node.js（建置時由 Maven 下載） | 24.21.0 | MIT 等（見 Node.js 發行版 LICENSE） |
+| 前端建置與測試工具：vite、@vitejs/plugin-vue、typescript、vue-tsc、vitest、@vue/test-utils、jsdom、@types/node | 見 `frontend/package-lock.json` | MIT／Apache-2.0（typescript） |
 
 ---
 
@@ -149,7 +193,7 @@ Copyright (c) 2006, David Crawshaw.  All rights reserved.   （Zentus 原始程�
 | MIT / ISC / BSD / BSL-1.0 | 寬鬆授權，只需保留版權與許可聲明（已收錄於 `licenses/`）。 |
 | Apache-2.0 第 4(d) 條 NOTICE 轉載 | Jackson、Jetty、Servlet API 的 NOTICE 已轉載於 `NOTICE`。 |
 | SQLite | 公眾領域，沒有義務。 |
-| 前端頁面（`src/main/resources/static`） | 沒有引用外部 CDN 或第三方 JS / CSS 函式庫。 |
+| 網頁前端（`frontend/`） | 第三方 npm 套件皆為 MIT 或 Apache-2.0，已列於第一節並附授權全文；執行時不引用任何外部 CDN 或網路資源。 |
 | 加密軟體 | Jetty（UnixCrypt）與 jBCrypt 含雜湊演算法；SNMP4J 含 SNMPv3 所用的 DES / AES 加密。若產品要出口，請依所在地的出口管制法規自行確認。 |
 
 ---
@@ -158,6 +202,6 @@ Copyright (c) 2006, David Crawshaw.  All rights reserved.   （Zentus 原始程�
 
 新增或升級相依套件時：
 
-1. 執行 `mvn dependency:list -DincludeScope=runtime` 確認完整清單（含遞移相依）。
+1. 執行 `mvn dependency:list -DincludeScope=runtime` 確認完整清單（含遞移相依）；前端套件以 Vite 建置實際打包的模組確認（`frontend/node_modules/<套件>/package.json` 的 `license`）。
 2. 查看新套件的 POM `<licenses>`，以及 JAR 內的 `META-INF/LICENSE*`、`NOTICE*`。
-3. 更新本文件的表格與版權宣告；有 NOTICE 的 Apache-2.0 套件要轉載到 `NOTICE`；新的授權類型要把全文放進 `licenses/`。
+3. 更新本文件的表格與版權宣告；有 NOTICE 的 Apache-2.0 套件要轉載到 `NOTICE`；新的授權類型要把全文放進 `licenses/`；前端套件更新 `licenses/frontend-npm-packages.txt`。
