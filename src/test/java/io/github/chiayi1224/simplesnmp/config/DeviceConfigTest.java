@@ -58,6 +58,17 @@ class DeviceConfigTest {
         assertNotNull(new DeviceConfig.Builder("R1", "h").diskFilter(tooLong).build().validate());
     }
 
+    @Test
+    void 連線中斷告警_預設關閉_等級正規化_不合法回傳錯誤() {
+        DeviceConfig d = new DeviceConfig("R1", "10.0.0.1", "public");
+        assertEquals("", d.getUnreachableSeverity());
+        assertEquals(1, d.getUnreachableCount());
+        assertEquals("CRITICAL", new DeviceConfig.Builder("R1", "h").unreachableSeverity(" critical ").build().getUnreachableSeverity());
+        assertNull(new DeviceConfig.Builder("R1", "h").unreachableSeverity("WARNING").unreachableCount(2).build().validate());
+        assertNotNull(new DeviceConfig.Builder("R1", "h").unreachableSeverity("INFO").build().validate());
+        assertNotNull(new DeviceConfig.Builder("R1", "h").unreachableSeverity("CRITICAL").unreachableCount(0).build().validate());
+    }
+
     // ─── SNMP 版本與 v3 驗證 ─────────────────────────────────────
 
     private static DeviceConfig.Builder v3(String auth, String priv) {

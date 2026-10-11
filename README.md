@@ -8,7 +8,9 @@
 - **Trap 接收**：同一個 port 同時支援 SNMPv1 / v2c / v3（USM）與 INFORM；v1 依 RFC 3584 轉換
 - **OID 探索**：掃描設備的系統資訊、辨識廠牌、探測常見 MIB 支援，並可完整走訪 OID 子樹
 - **Trap 對應**：網頁管理 Trap OID 對應，未定義 Trap 一鍵轉成告警規則
-- **閾值告警**：連續超過閾值才觸發，連續恢復才解除，不重複寫入（參考 OpenNMS 設計）
+- **閾值告警**：每台設備各自設定 Warning／Critical 兩段閾值，連續超過才觸發、可在等級間升降、連續恢復才解除；沒有預設閾值（參考 OpenNMS 設計）
+- **連線中斷告警**：每台設備可開啟，設備 OFFLINE／SNMP_ERROR 時告警、恢復後自動解除
+- **Trap 告警等級**：每筆 Trap 對應可指定 Warning 或 Critical
 - **Web 管理介面**：設備新增/編輯/停用，修改後下一個 poll 週期立即生效
 - **帳號管理**：Session 認證、BCrypt 密碼、首次登入強制改密碼
 - **SQLite 儲存**：無需額外資料庫
@@ -101,20 +103,23 @@ trap2sink 192.168.1.100:1162 trapUser
 勾選「完整走訪」會收集 MIB-2 與廠牌子樹（或自訂子樹）的所有 OID，單次最多 10,000 筆、120 秒，
 每台設備保留最近 3 次結果。掃描只發出讀取請求（GET / GETNEXT / GETBULK）。
 
-### 閾值設定
+### 閾值與告警等級
 
-修改 `ThresholdConfig.java`：
+閾值屬於個別設備，**沒有預設值**：沒有設定閾值的設備與指標只記錄數值、不告警。
+在網頁「閾值設定」分頁選擇設備後設定，或呼叫 `/api/admin/device-thresholds`：
 
-```java
-public static ThresholdConfig cpu() {
-    return new Builder("cpu")
-        .threshold(90.0)    // 超過 90% 才告警
-        .rearmValue(80.0)   // 低於 80% 才恢復
-        .triggerCount(3)    // 連續 3 次才觸發
-        .rearmCount(2)      // 連續 2 次才恢復
-        .build();
-}
-```
+| 欄位 | 說明 |
+|---|---|
+| `warning` / `critical` | 兩段觸發值，至少設定一個；可為 `null` |
+| `direction` | `HIGH`（超過才告警）或 `LOW`（低於才告警）；cpu／memory／disk 固定 `HIGH` |
+| `rearmMargin` | 恢復寬度：HIGH 時數值低於或等於「觸發值 − 寬度」才算自該等級恢復 |
+| `triggerCount` / `rearmCount` | 連續幾次超過才觸發或升級／連續幾次恢復才降級或解除 |
+
+- 磁碟：設備的 `disk` 閾值套用到所有掛載點，`disk:/data` 這類掛載點閾值可個別覆寫。
+- 告警事件有 `TRIGGERED`（發生）、`CHANGED`（等級改變）、`RESOLVED`（解除）三種，每筆都帶 `WARNING` 或 `CRITICAL`。
+- 程式重新啟動後，依資料庫最後一筆事件延續未解除的告警，不會重複觸發。
+- 「套用到其他設備」可把一台設備的閾值與連線中斷告警設定一次複製到多台設備。
+- 從舊版升級時，原本的全域閾值會轉成每台既有設備的 Critical 閾值（只執行一次）；之後新增的設備沒有閾值。
 
 ### 資料保存期限與備份
 
@@ -149,9 +154,10 @@ src/main/java/io/github/chiayi1224/simplesnmp/
 ├── storage/
 │   └── MetricStore.java       SQLite 讀寫
 ├── threshold/
-│   ├── ThresholdConfig.java   閾值參數
-│   ├── ThresholdState.java    狀態機
-│   ├── ThresholdEngine.java   統一管理
+│   ├── Severity.java          告警等級（WARNING / CRITICAL）
+│   ├── ThresholdConfig.java   閾值參數（Warning / Critical / 恢復寬度）
+│   ├── ThresholdState.java    多等級狀態機
+│   ├── ThresholdEngine.java   每設備評估、重啟還原、連線中斷告警
 │   └── AlertEvent.java        事件 model
 ├── trap/
 │   └── TrapReceiver.java      v1/v2c/v3 Trap 接收
@@ -162,8 +168,9 @@ src/main/java/io/github/chiayi1224/simplesnmp/
         ├── AuthServlet.java   登入/登出 API
         ├── UserServlet.java   帳號管理 API
         ├── DeviceServlet.java 設備管理 API
-        ├── StatusServlet.java 狀態查詢 API
-        ├── AlertServlet.java  告警查詢 API
+        ├── V1StatusServlet.java 狀態查詢 API
+        ├── V1AlertServlet.java  告警查詢 API
+        ├── DeviceThresholdServlet.java 每台設備閾值 API
         └── BaseJsonServlet.java JSON 共用基底
 ```
 
@@ -177,13 +184,13 @@ src/main/java/io/github/chiayi1224/simplesnmp/
 | GET | `/api/auth/me` | 目前登入帳號 |
 | POST | `/api/v1/status` | 各設備最新狀態 |
 | POST | `/api/v1/devices`、`/api/v1/devices/{name}` | 設備清單 / 單台設備（不含 v3 密碼） |
-| POST | `/api/v1/alerts` | 告警記錄 |
-| GET / POST | `/api/admin/devices` | 設備清單 / 新增（含 `snmpVersion` 與 v3 欄位） |
+| POST | `/api/v1/alerts` | 告警記錄（body：`device`、`severity`、`active` 只看未解除、`limit`；每筆含 `severity`） |
+| GET / POST | `/api/admin/devices` | 設備清單 / 新增（含 `snmpVersion`、v3、`diskFilter`、`unreachableSeverity`／`unreachableCount` 欄位） |
 | GET / POST | `/api/admin/devices/{name}` | 單台設備 / 更新（body 為 `{"action":"delete"}` 時刪除） |
 | GET / POST | `/api/admin/users` | 帳號清單 / 新增 |
 | PUT / DELETE | `/api/admin/users/{id}` | 更新 / 刪除帳號 |
 | PUT | `/api/admin/users/{id}/password` | 修改密碼 |
-| GET / POST | `/api/admin/trap-mappings` | Trap OID 對應清單 / 新增（觸發 OID 重複回 409） |
+| GET / POST | `/api/admin/trap-mappings` | Trap OID 對應清單 / 新增（`severity` 省略為 CRITICAL；觸發 OID 重複回 409） |
 | PUT / DELETE | `/api/admin/trap-mappings/{id}` | 更新 / 刪除對應 |
 | GET | `/api/admin/unknown-traps` | 未定義 Trap 與未登錄來源 |
 | DELETE | `/api/admin/unknown-traps/oids/{id}`、`/sources/{id}` | 刪除單筆未定義記錄 |
@@ -193,7 +200,10 @@ src/main/java/io/github/chiayi1224/simplesnmp/
 | GET | `/api/admin/discovery/scans/{id}/oids?prefix=&q=&offset=&limit=` | OID 明細分頁 |
 | GET / POST / PUT / DELETE | `/api/admin/v3-users` | Trap 用 SNMPv3 使用者 |
 | GET / PUT | `/api/admin/settings`、`/api/admin/settings/{key}` | 系統設定 |
-| GET / POST / PUT / DELETE | `/api/admin/thresholds`、`/api/admin/thresholds/{id}` | 閾值設定（POST 新增自訂指標閾值，可設 `direction` HIGH／LOW；內建 cpu／memory／disk 不可刪除） |
+| GET | `/api/admin/device-thresholds?device=` | 設備的閾值與可設定的指標；不帶 `device` 時回傳每台設備的閾值筆數 |
+| PUT | `/api/admin/device-thresholds` | 以 `device`＋`metricName` 新增或取代閾值 |
+| DELETE | `/api/admin/device-thresholds/{id}` | 刪除閾值（未解除的告警於下一次輪詢解除） |
+| POST | `/api/admin/device-thresholds/copy` | `{"from":"A","to":["B"]}` 複製閾值與連線中斷告警設定 |
 | GET / POST | `/api/admin/profiles` | 監控範本清單（含套用設備數）／新增 |
 | GET / PUT / DELETE | `/api/admin/profiles/{id}` | 單一範本／更新／刪除（內建範本 403） |
 | POST | `/api/admin/profiles/{id}/copy` | 複製範本 |

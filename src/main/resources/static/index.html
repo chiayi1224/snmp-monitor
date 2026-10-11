@@ -42,7 +42,10 @@
   .pct-bar { display: inline-block; width: 80px; height: 8px; background: #eee; border-radius: 4px; vertical-align: middle; margin-right: 6px; overflow: hidden; }
   .pct-fill { display: block; height: 100%; border-radius: 4px; }
   .alert-triggered { color: #c62828; font-weight: 600; }
+  .alert-warning   { color: #e65100; font-weight: 600; }
   .alert-resolved  { color: #2e7d32; }
+  .badge.crit { background: #ffebee; color: #c62828; }
+  .badge.warn { background: #fff3e0; color: #e65100; }
   .hint { font-size: .8rem; color: #e65100; margin-top: 4px; }
   .panel { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1); padding: 12px 16px; margin-bottom: 16px; font-size: .9rem; }
   .panel.err { border-left: 4px solid #c62828; }
@@ -176,8 +179,8 @@
     </div>
     <h2>Trap OID 對應（變更立即生效）</h2>
     <table>
-      <thead><tr><th>指標</th><th>觸發 OID</th><th>恢復 OID</th><th>說明</th><th>狀態</th><th>操作</th></tr></thead>
-      <tbody id="mappings-body"><tr><td colspan="6" style="color:#aaa">載入中...</td></tr></tbody>
+      <thead><tr><th>指標</th><th>等級</th><th>觸發 OID</th><th>恢復 OID</th><th>說明</th><th>狀態</th><th>操作</th></tr></thead>
+      <tbody id="mappings-body"><tr><td colspan="7" style="color:#aaa">載入中...</td></tr></tbody>
     </table>
 
     <h2 class="section-gap">未定義 Trap（收到但沒有對應規則）</h2>
@@ -226,28 +229,36 @@
   <!-- 閾值設定 -->
   <section id="tab-thresholds">
     <div class="panel">
-      連續達到「觸發次數」次超過（方向 HIGH）或低於（方向 LOW）觸發值才產生告警；告警後連續達到「恢復次數」次回到恢復值的安全側才解除。
-      修改後下一次輪詢即生效。cpu／memory／disk 為百分比、方向固定 HIGH，disk 套用到每個掛載點；自訂指標沒有設定閾值時只儲存數值、不告警。
+      閾值屬於個別設備，<strong>沒有預設值</strong>：沒有設定閾值的指標只記錄數值、不告警。
+      每個指標可設 Warning 與 Critical（至少一個）：連續達到「觸發次數」次超過才觸發或升級，
+      連續達到「恢復次數」次回到「觸發值 − 恢復寬度」以下（方向 LOW 時為「觸發值 + 恢復寬度」以上）才降級或解除。
+      disk 套用到所有掛載點，<code>disk:/data</code> 這類掛載點閾值可個別覆寫。修改後下一次輪詢即生效。
     </div>
+    <div class="toolbar" style="justify-content:flex-start;gap:8px;align-items:center;flex-wrap:wrap">
+      <span>設備</span>
+      <select id="th-device" class="inline-input" style="min-width:240px" onchange="loadDeviceThresholds()"></select>
+      <button class="btn btn-sm" id="th-copy-btn" onclick="openThresholdCopy()">套用到其他設備</button>
+      <span id="th-unreachable" style="font-size:.85rem;color:#666"></span>
+    </div>
+    <div id="th-empty" class="panel" style="display:none;border-left:4px solid #e65100">此設備尚未設定閾值，不會產生閾值告警。</div>
     <h2>閾值清單</h2>
     <table>
-      <thead><tr><th>指標</th><th>方向</th><th>觸發值</th><th>恢復值</th><th>觸發次數</th><th>恢復次數</th><th>更新時間</th><th>操作</th></tr></thead>
-      <tbody id="thresholds-body"><tr><td colspan="8" style="color:#aaa">載入中...</td></tr></tbody>
+      <thead><tr><th>指標</th><th>方向</th><th>Warning</th><th>Critical</th><th>恢復寬度</th><th>觸發次數</th><th>恢復次數</th><th>更新時間</th><th>操作</th></tr></thead>
+      <tbody id="thresholds-body"><tr><td colspan="9" style="color:#aaa">載入中...</td></tr></tbody>
     </table>
 
-    <h2 class="section-gap">新增自訂指標閾值</h2>
+    <h2 class="section-gap">新增閾值</h2>
     <div class="panel">
-      <div id="th-unset" style="margin-bottom:10px;font-size:.85rem;color:#666"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-        <label>指標名稱 *<input type="text" id="th-new-key" list="th-keys" class="th-input" style="width:170px" placeholder="例如 temperature"></label>
+        <label>指標 *<input type="text" id="th-new-key" list="th-keys" class="th-input" style="width:200px" placeholder="cpu、disk:/data、temperature" oninput="thKeyChanged()"></label>
         <datalist id="th-keys"></datalist>
         <label>方向<select id="th-new-dir" class="th-input" style="width:150px" onchange="thDirectionHint()">
           <option value="HIGH">HIGH 超過才告警</option><option value="LOW">LOW 低於才告警</option></select></label>
-        <label>觸發值 *<input type="number" id="th-new-threshold" step="any" class="th-input" style="width:100px"></label>
-        <label>恢復值 *<input type="number" id="th-new-rearm" step="any" class="th-input" style="width:100px"></label>
-        <label>觸發次數<input type="number" id="th-new-trigger" min="1" value="3" class="th-input" style="width:80px"></label>
-        <label>恢復次數<input type="number" id="th-new-rearm-count" min="1" value="2" class="th-input" style="width:80px"></label>
-        <label>說明<input type="text" id="th-new-desc" class="th-input" style="width:180px"></label>
+        <label>Warning<input type="number" id="th-new-warning" step="any" class="th-input" style="width:90px" placeholder="選填"></label>
+        <label>Critical<input type="number" id="th-new-critical" step="any" class="th-input" style="width:90px" placeholder="選填"></label>
+        <label>恢復寬度<input type="number" id="th-new-margin" step="any" min="0" value="5" class="th-input" style="width:80px"></label>
+        <label>觸發次數<input type="number" id="th-new-trigger" min="1" value="3" class="th-input" style="width:70px"></label>
+        <label>恢復次數<input type="number" id="th-new-rearm-count" min="1" value="2" class="th-input" style="width:70px"></label>
         <button class="btn btn-primary" onclick="createThreshold()">新增</button>
       </div>
       <div id="th-dir-hint" style="margin-top:8px;font-size:.8rem;color:#888"></div>
@@ -256,10 +267,17 @@
 
   <!-- 告警記錄 -->
   <section id="tab-alerts">
-    <h2>最近告警記錄</h2>
+    <div class="toolbar" style="justify-content:flex-start;gap:8px;align-items:center;flex-wrap:wrap">
+      <select id="al-severity" class="inline-input" onchange="loadAlerts()">
+        <option value="">全部等級</option><option value="CRITICAL">Critical</option><option value="WARNING">Warning</option></select>
+      <select id="al-device" class="inline-input" style="min-width:180px" onchange="loadAlerts()"></select>
+      <label class="toggle" style="margin:0"><input type="checkbox" id="al-active" onchange="loadAlerts()"><span>只看未解除</span></label>
+      <button class="btn btn-sm" onclick="loadAlerts()">重新整理</button>
+    </div>
+    <h2 id="al-title">最近告警記錄</h2>
     <table>
-      <thead><tr><th>時間</th><th>設備</th><th>指標</th><th>事件</th><th>數值</th><th>閾值</th></tr></thead>
-      <tbody id="alerts-body"><tr><td colspan="6" style="color:#aaa">載入中...</td></tr></tbody>
+      <thead><tr><th>時間</th><th>設備</th><th>指標</th><th>等級</th><th>事件</th><th>數值</th><th>閾值</th><th>描述</th></tr></thead>
+      <tbody id="alerts-body"><tr><td colspan="8" style="color:#aaa">載入中...</td></tr></tbody>
     </table>
   </section>
 
@@ -359,6 +377,15 @@
       <div id="d-disk-list" style="display:none;margin-top:6px;border:1px solid #ddd;border-radius:4px;padding:6px 8px;max-height:200px;overflow:auto"></div>
       <span id="d-disk-msg" style="color:#888;font-size:.8rem">以目前填的連線資料向設備查詢可監控的磁碟，勾選後自動填入；不勾選任何項目代表全部。也可手動輸入，用逗號分隔、* 當萬用字元。不符合的磁碟不記錄、不告警，下次輪詢生效。</span>
     </label>
+    <label>連線中斷告警（設備 OFFLINE／SNMP 無回應時）
+      <div style="display:flex;gap:6px;align-items:center">
+        <select id="d-unreach" style="flex:1" onchange="$('d-unreach-count').disabled = !this.value">
+          <option value="">關閉</option><option value="WARNING">Warning</option><option value="CRITICAL">Critical</option></select>
+        <span style="white-space:nowrap;margin-top:4px">連續</span>
+        <input type="number" id="d-unreach-count" min="1" value="1" style="width:70px">
+        <span style="white-space:nowrap;margin-top:4px">次</span>
+      </div>
+    </label>
     <label><div class="toggle"><input type="checkbox" id="d-enabled" checked><span>啟用監控</span></div></label>
   </div>
   <div class="dialog-footer">
@@ -443,12 +470,30 @@
     <label>指標名稱 * <input type="text" id="m-metric" placeholder="例如 fan、link_down、cpu"></label>
     <label>觸發 OID *（收到時產生 TRIGGERED 告警）<input type="text" id="m-triggered" class="mono"></label>
     <label>恢復 OID（選填，收到時產生 RESOLVED）<input type="text" id="m-resolved" class="mono"></label>
+    <label>告警等級
+      <select id="m-severity"><option value="CRITICAL">Critical</option><option value="WARNING">Warning</option></select>
+    </label>
     <label>說明 <input type="text" id="m-desc"></label>
+    <div style="color:#888;font-size:.8rem">指標名稱請勿與輪詢指標（cpu、memory 等）相同，否則會與閾值告警共用「未解除」狀態。</div>
     <label id="m-enabled-row"><div class="toggle"><input type="checkbox" id="m-enabled" checked><span>啟用</span></div></label>
   </div>
   <div class="dialog-footer">
     <button class="btn" onclick="closeDialog('mapping-dialog')">取消</button>
     <button class="btn btn-primary" onclick="saveMapping()">儲存</button>
+  </div>
+</dialog>
+
+<!-- 套用閾值到其他設備 Dialog -->
+<dialog id="th-copy-dialog">
+  <div class="dialog-header">套用閾值到其他設備</div>
+  <div class="dialog-body">
+    <div id="th-copy-from"></div>
+    <div id="th-copy-list" style="max-height:260px;overflow:auto;border:1px solid #ddd;border-radius:4px;padding:6px 8px"></div>
+    <div style="color:#888;font-size:.8rem">目標設備中同名指標的閾值會被取代，其他指標保留；連線中斷告警設定也會一併套用。</div>
+  </div>
+  <div class="dialog-footer">
+    <button class="btn" onclick="closeDialog('th-copy-dialog')">取消</button>
+    <button class="btn btn-primary" onclick="applyThresholdCopy()">套用</button>
   </div>
 </dialog>
 
@@ -576,6 +621,19 @@ function fmtNum(v) {
   return typeof v === 'number' ? String(Math.round(v * 100) / 100) : String(v ?? '');
 }
 
+// 告警等級徽章
+const SEVERITY_LABEL = { CRITICAL: 'Critical', WARNING: 'Warning' };
+function severityBadge(sev) {
+  if (!SEVERITY_LABEL[sev]) return '—';
+  return `<span class="badge ${sev === 'CRITICAL' ? 'crit' : 'warn'}">${SEVERITY_LABEL[sev]}</span>`;
+}
+
+// 共用：設備清單（/api/v1/devices）
+async function fetchDevices() {
+  return fetch('/api/v1/devices', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' })
+    .then(r => r.ok ? r.json() : []).catch(() => []);
+}
+
 function pctBar(pct) {
   const p = pct.toFixed(1);
   const color = pct >= 90 ? '#e53935' : pct >= 75 ? '#fb8c00' : '#43a047';
@@ -584,26 +642,56 @@ function pctBar(pct) {
 
 // ── 狀態 ─────────────────────────────────────────────────────────
 async function loadStatus() {
-  const data = await fetch('/api/v1/status',
-    { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' })
-    .then(r => r.json()).catch(() => []);
+  const [data, active] = await Promise.all([
+    fetch('/api/v1/status', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' })
+      .then(r => r.json()).catch(() => []),
+    fetch('/api/v1/alerts', { method: 'POST', headers: {'Content-Type':'application/json'},
+                              body: JSON.stringify({ active: true, limit: 1000 }) })
+      .then(r => r.ok ? r.json() : []).catch(() => []),
+  ]);
+  // 每台設備目前未解除告警中最高的等級與指標清單
+  const worst = {};
+  for (const a of active) {
+    const w = worst[a.deviceName] || (worst[a.deviceName] = { severity: 'WARNING', metrics: [] });
+    if (a.severity === 'CRITICAL') w.severity = 'CRITICAL';
+    w.metrics.push(`${a.metricName}（${SEVERITY_LABEL[a.severity] || a.severity}）`);
+  }
+  // 有未解除告警但沒有任何指標數值的設備（例如一開始就連不上）也要列出
+  for (const name of Object.keys(worst)) {
+    if (!data.some(d => d.deviceName === name)) data.push({ deviceName: name, noData: true });
+  }
   const tb = $('status-body');
   if (!data.length) { tb.innerHTML = '<tr><td colspan="5" style="color:#aaa">尚無資料</td></tr>'; return; }
-  tb.innerHTML = data.map(d => `<tr>
-    <td><strong>${esc(d.deviceName)}</strong></td>
+  tb.innerHTML = data.map(d => {
+    if (d.noData) {
+      const w = worst[d.deviceName];
+      return `<tr>
+    <td><strong>${esc(d.deviceName)}</strong>
+        <div title="${esc('未解除告警：' + w.metrics.join('、'))}" style="margin-top:4px">${severityBadge(w.severity)}
+              <span style="color:#888;font-size:.75rem">${esc(w.metrics.length)} 個告警</span></div></td>
+    <td colspan="4" style="color:#aaa">尚無指標數據</td>
+  </tr>`;
+    }
+    const w = worst[d.deviceName];
+    return `<tr>
+    <td><strong>${esc(d.deviceName)}</strong>
+        ${w ? `<div title="${esc('未解除告警：' + w.metrics.join('、'))}" style="margin-top:4px">${severityBadge(w.severity)}
+              <span style="color:#888;font-size:.75rem">${esc(w.metrics.length)} 個告警</span></div>` : ''}</td>
     <td>${d.cpu ? pctBar(d.cpu.usedPct) : '—'}</td>
     <td>${d.memory ? pctBar(d.memory.usedPct) : '—'}</td>
     <td>${d.disks && d.disks.length ? d.disks.map(k => `${esc(k.mountPoint)} ${pctBar(k.usedPct)}`).join('<br>') : '—'}</td>
     <td>${d.custom && d.custom.length ? d.custom.map(c =>
           `<span title="${esc(fmtTime(c.ts))}">${esc(c.metricKey)}：<strong>${esc(fmtNum(c.value))}</strong> ${esc(c.unit)}</span>`).join('<br>') : '—'}</td>
-  </tr>`).join('');
+  </tr>`;
+  }).join('');
 }
 
 // ── 設備管理 ──────────────────────────────────────────────────────
 async function loadDevices() {
-  const data = await fetch('/api/v1/devices',
-    { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' })
-    .then(r => r.json()).catch(() => []);
+  const [data, counts] = await Promise.all([
+    fetchDevices(),
+    fetch('/api/admin/device-thresholds').then(r => r.ok ? r.json() : {}).then(j => j.counts || {}).catch(() => ({})),
+  ]);
   const tb = $('devices-body');
   if (!data.length) { tb.innerHTML = '<tr><td colspan="7" style="color:#aaa">尚無設備</td></tr>'; return; }
   tb.innerHTML = data.map(d => `<tr>
@@ -611,7 +699,11 @@ async function loadDevices() {
     <td>v${esc(d.snmpVersion || '2c')} ${d.snmpVersion === '3'
           ? `<code>${esc(d.v3User)}</code>`
           : '<span style="color:#aaa">community 已設定</span>'}</td>
-    <td>${esc(d.appliedProfileName || '—')}${d.profileId == null ? ' <span class="badge off">自動</span>' : ''}</td>
+    <td>${esc(d.appliedProfileName || '—')}${d.profileId == null ? ' <span class="badge off">自動</span>' : ''}
+        <div style="margin-top:4px">${counts[d.name]
+          ? `<span class="badge info">${esc(counts[d.name])} 個閾值</span>`
+          : '<span class="badge warn" title="沒有閾值的設備不會產生閾值告警">未設定閾值</span>'}
+        ${d.unreachableSeverity ? `<span class="badge off" title="連線中斷告警">斷線 ${esc(SEVERITY_LABEL[d.unreachableSeverity] || d.unreachableSeverity)}</span>` : ''}</div></td>
     <td><span class="badge ${d.enabled ? 'ok' : 'off'}">${d.enabled ? '啟用' : '停用'}</span></td>
     <td>
       <button class="btn btn-sm btn-primary" onclick="openDeviceDialog(${jsArg(d)})">編輯</button>
@@ -638,6 +730,9 @@ async function openDeviceDialog(d = null) {
   $('d-community').placeholder = d ? '留空不變更' : '';
   $('d-enabled').checked = d ? d.enabled : true;
   $('d-disk-filter').value = d && d.diskFilter ? d.diskFilter : '';
+  $('d-unreach').value       = d && d.unreachableSeverity ? d.unreachableSeverity : '';
+  $('d-unreach-count').value = d && d.unreachableCount ? d.unreachableCount : 1;
+  $('d-unreach-count').disabled = !$('d-unreach').value;
   $('d-disk-list').style.display = 'none';
   $('d-disk-list').innerHTML = '';
   $('d-disk-msg').style.color = '#888';
@@ -732,7 +827,9 @@ function collectDeviceBody() {
                  retries: parseInt($('d-retries').value), timeoutMs: parseInt($('d-timeout').value),
                  enabled: $('d-enabled').checked, snmpVersion: $('d-version').value,
                  profileId: $('d-profile').value === 'auto' ? null : Number($('d-profile').value),
-                 diskFilter: $('d-disk-filter').value.trim() };
+                 diskFilter: $('d-disk-filter').value.trim(),
+                 unreachableSeverity: $('d-unreach').value,
+                 unreachableCount: parseInt($('d-unreach-count').value) || 1 };
   if (body.snmpVersion === '3') {
     body.v3User         = $('d-v3-user').value.trim();
     body.v3AuthProtocol = $('d-v3-auth-proto').value;
@@ -806,72 +903,114 @@ async function saveSetting(i) {
   loadSettings();
 }
 
-// ─── 閾值設定 ─────────────────────────────────────────────────
-let thresholdRows = [];
+// ─── 閾值設定（每台設備） ───────────────────────────────────
+let thDevices = [];
+let thRows = [];
+
+// cpu／memory／disk 與 disk:<掛載點> 為百分比，方向固定 HIGH
+function isPercentMetric(name) { return /^(cpu|memory|disk)(:|$)/.test(name); }
+
+function thMetricLabel(name) {
+  if (name === 'disk') return 'disk <span style="color:#888;font-size:.8rem">（所有掛載點預設）</span>';
+  if (name.startsWith('disk:')) return `${esc(name)} <span style="color:#888;font-size:.8rem">（掛載點覆寫）</span>`;
+  return esc(name);
+}
 
 async function loadThresholds() {
-  const [rows, profiles] = await Promise.all([
-    fetch('/api/admin/thresholds').then(r => r.ok ? r.json() : []).catch(() => []),
-    fetchProfiles(),
+  const [devices, counts] = await Promise.all([
+    fetchDevices(),
+    fetch('/api/admin/device-thresholds').then(r => r.ok ? r.json() : {}).then(j => j.counts || {}).catch(() => ({})),
   ]);
-  thresholdRows = rows;
-  $('thresholds-body').innerHTML = rows.length ? rows.map((t, i) => `<tr>
-      <td><strong>${esc(t.metricName)}</strong> ${t.builtin ? '<span class="badge info">內建</span>' : ''}
-          ${t.description ? `<div style="color:#888;font-size:.8rem">${esc(t.description)}</div>` : ''}</td>
-      <td><select id="th-dir-${i}" class="th-input" style="width:120px" ${t.builtin ? 'disabled' : ''}>
+  thDevices = devices;
+  const sel = $('th-device');
+  const prev = sel.value;
+  if (!devices.length) {
+    sel.innerHTML = '';
+    $('th-empty').style.display = 'none';
+    $('thresholds-body').innerHTML = '<tr><td colspan="9" style="color:#aaa">尚無設備，請先到「設備管理」新增</td></tr>';
+    return;
+  }
+  sel.innerHTML = devices.map(d =>
+    `<option value="${esc(d.name)}">${esc(d.name)}（${esc(counts[d.name] || 0)} 個閾值）</option>`).join('');
+  sel.value = devices.some(d => d.name === prev) ? prev : devices[0].name;
+  await loadDeviceThresholds();
+}
+
+async function loadDeviceThresholds() {
+  const name = $('th-device').value;
+  if (!name) return;
+  const data = await fetch(`/api/admin/device-thresholds?device=${encodeURIComponent(name)}`)
+    .then(r => r.ok ? r.json() : null).catch(() => null);
+  thRows = data ? data.thresholds : [];
+  const dev = thDevices.find(d => d.name === name) || {};
+  $('th-unreachable').innerHTML = '連線中斷告警：' + (dev.unreachableSeverity
+    ? `${severityBadge(dev.unreachableSeverity)} 連續 ${esc(dev.unreachableCount)} 次`
+    : '關閉') + ' <span style="color:#aaa">（在「設備管理」的設備設定中修改）</span>';
+  $('th-empty').style.display = thRows.length ? 'none' : '';
+
+  $('thresholds-body').innerHTML = thRows.length ? thRows.map((t, i) => {
+    const pct = isPercentMetric(t.metricName);
+    const unit = pct ? ' %' : '';
+    return `<tr>
+      <td><strong>${thMetricLabel(t.metricName)}</strong></td>
+      <td><select id="th-dir-${i}" class="th-input" style="width:110px" ${pct ? 'disabled' : ''}>
             <option value="HIGH" ${t.direction === 'HIGH' ? 'selected' : ''}>HIGH 超過</option>
             <option value="LOW" ${t.direction === 'LOW' ? 'selected' : ''}>LOW 低於</option></select></td>
-      <td><input type="number" step="any" id="th-threshold-${i}" class="th-input" style="width:90px" value="${esc(t.threshold)}">${t.builtin ? ' %' : ''}</td>
-      <td><input type="number" step="any" id="th-rearm-${i}" class="th-input" style="width:90px" value="${esc(t.rearm)}">${t.builtin ? ' %' : ''}</td>
-      <td><input type="number" min="1" id="th-trigger-${i}" class="th-input" style="width:64px" value="${esc(t.triggerCount)}"></td>
-      <td><input type="number" min="1" id="th-rearm-count-${i}" class="th-input" style="width:64px" value="${esc(t.rearmCount)}"></td>
-      <td style="white-space:nowrap;font-size:.8rem;color:#888">${esc(fmtTime(t.updated))}</td>
+      <td><input type="number" step="any" id="th-warn-${i}" class="th-input" style="width:80px;border-color:#fb8c00" value="${esc(t.warning ?? '')}" placeholder="—">${unit}</td>
+      <td><input type="number" step="any" id="th-crit-${i}" class="th-input" style="width:80px;border-color:#e53935" value="${esc(t.critical ?? '')}" placeholder="—">${unit}</td>
+      <td><input type="number" step="any" min="0" id="th-margin-${i}" class="th-input" style="width:70px" value="${esc(t.rearmMargin)}"></td>
+      <td><input type="number" min="1" id="th-trig-${i}" class="th-input" style="width:60px" value="${esc(t.triggerCount)}"></td>
+      <td><input type="number" min="1" id="th-rc-${i}" class="th-input" style="width:60px" value="${esc(t.rearmCount)}"></td>
+      <td style="font-size:.8rem;color:#888">${esc(fmtTime(t.updated))}</td>
       <td>
         <button class="btn btn-sm btn-primary" onclick="saveThreshold(${i})">儲存</button>
-        ${t.builtin ? '' : `<button class="btn btn-sm btn-danger" onclick="deleteThreshold(${i})">刪除</button>`}
+        <button class="btn btn-sm btn-danger" onclick="deleteThreshold(${i})">刪除</button>
       </td>
-    </tr>`).join('')
-    : '<tr><td colspan="8" style="color:#aaa">沒有閾值設定</td></tr>';
+    </tr>`;
+  }).join('') : '<tr><td colspan="9" style="color:#aaa">沒有閾值</td></tr>';
 
-  // 範本中出現、但尚未設定閾值的自訂指標
-  const keys = [...new Set(profiles.flatMap(p => p.metrics.map(m => m.metricKey)))]
-    .filter(k => !['cpu', 'memory', 'disk'].includes(k)).sort();
-  const unset = keys.filter(k => !rows.some(t => t.metricName === k));
-  $('th-keys').innerHTML = unset.map(k => `<option value="${esc(k)}">`).join('');
-  $('th-unset').innerHTML = unset.length
-    ? '尚未設定閾值的自訂指標（只儲存、不告警）：' + unset.map(k =>
-        `<button class="btn btn-sm" style="margin:2px" onclick="$('th-new-key').value = ${jsArg(k)}; $('th-new-threshold').focus()">${esc(k)}</button>`).join('')
-    : '監控範本中的自訂指標都已設定閾值；也可以先設定閾值，之後再把同名指標加入範本。';
+  const set = new Set(thRows.map(t => t.metricName));
+  $('th-keys').innerHTML = (data ? data.availableMetrics : [])
+    .filter(k => !set.has(k)).map(k => `<option value="${esc(k)}">`).join('');
+  thKeyChanged();
+}
+
+function thKeyChanged() {
+  const pct = isPercentMetric($('th-new-key').value.trim());
+  if (pct) $('th-new-dir').value = 'HIGH';
+  $('th-new-dir').disabled = pct;
   thDirectionHint();
 }
 
 function thDirectionHint() {
   $('th-dir-hint').textContent = $('th-new-dir').value === 'HIGH'
-    ? 'HIGH：數值大於觸發值才告警，降到恢復值（含）以下解除，恢復值必須小於觸發值。'
-    : 'LOW：數值小於觸發值才告警，升到恢復值（含）以上解除，恢復值必須大於觸發值。';
+    ? 'HIGH：數值大於觸發值才告警，降到「觸發值 − 恢復寬度」（含）以下才算恢復；Warning 必須小於 Critical。cpu／memory／disk 方向固定 HIGH，觸發值 0～100。'
+    : 'LOW：數值小於觸發值才告警，升到「觸發值 + 恢復寬度」（含）以上才算恢復；Warning 必須大於 Critical。';
 }
 
-function thresholdBody(direction, threshold, rearm, triggerCount, rearmCount) {
-  return { direction, threshold: Number(threshold), rearm: Number(rearm),
-           triggerCount: parseInt(triggerCount), rearmCount: parseInt(rearmCount) };
+function thNum(v) { return v === '' || v == null ? null : Number(v); }
+
+async function putThreshold(body) {
+  const res = await fetch('/api/admin/device-thresholds',
+    { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  return res.ok ? null : (data.error || '儲存失敗');
 }
 
 async function saveThreshold(i) {
-  const t = thresholdRows[i];
-  const body = thresholdBody($(`th-dir-${i}`).value, $(`th-threshold-${i}`).value, $(`th-rearm-${i}`).value,
-                             $(`th-trigger-${i}`).value, $(`th-rearm-count-${i}`).value);
-  const res = await fetch(`/api/admin/thresholds/${encodeURIComponent(t.id)}`,
-    { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) { alert(data.error || '儲存失敗'); return; }
-  alert(`${t.metricName} 閾值已更新，下次輪詢生效`);
+  const t = thRows[i];
+  const err = await putThreshold({ device: $('th-device').value, metricName: t.metricName,
+    direction: $(`th-dir-${i}`).value, warning: thNum($(`th-warn-${i}`).value), critical: thNum($(`th-crit-${i}`).value),
+    rearmMargin: Number($(`th-margin-${i}`).value || 0), triggerCount: parseInt($(`th-trig-${i}`).value),
+    rearmCount: parseInt($(`th-rc-${i}`).value) });
+  if (err) { alert(err); return; }
   loadThresholds();
 }
 
 async function deleteThreshold(i) {
-  const t = thresholdRows[i];
-  if (!confirm(`確定要刪除「${t.metricName}」的閾值嗎？刪除後此指標只儲存數值、不再告警。`)) return;
-  const res = await fetch(`/api/admin/thresholds/${encodeURIComponent(t.id)}`, { method: 'DELETE' });
+  const t = thRows[i];
+  if (!confirm(`確定要刪除「${t.metricName}」的閾值嗎？刪除後此指標只儲存數值、不再告警，未解除的告警會在下一次輪詢解除。`)) return;
+  const res = await fetch(`/api/admin/device-thresholds/${encodeURIComponent(t.id)}`, { method: 'DELETE' });
   const data = await res.json().catch(() => ({}));
   if (res.ok) loadThresholds();
   else alert(data.error || '刪除失敗');
@@ -879,16 +1018,37 @@ async function deleteThreshold(i) {
 
 async function createThreshold() {
   const metricName = $('th-new-key').value.trim();
-  if (!metricName) { alert('指標名稱為必填'); return; }
-  if ($('th-new-threshold').value === '' || $('th-new-rearm').value === '') { alert('觸發值與恢復值為必填'); return; }
-  const body = { metricName, description: $('th-new-desc').value.trim(),
-    ...thresholdBody($('th-new-dir').value, $('th-new-threshold').value, $('th-new-rearm').value,
-                     $('th-new-trigger').value, $('th-new-rearm-count').value) };
-  const res = await fetch('/api/admin/thresholds',
-    { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  if (!metricName) { alert('指標為必填'); return; }
+  const warning = thNum($('th-new-warning').value), critical = thNum($('th-new-critical').value);
+  if (warning == null && critical == null) { alert('Warning 與 Critical 至少要填一個'); return; }
+  const err = await putThreshold({ device: $('th-device').value, metricName, direction: $('th-new-dir').value,
+    warning, critical, rearmMargin: Number($('th-new-margin').value || 0),
+    triggerCount: parseInt($('th-new-trigger').value), rearmCount: parseInt($('th-new-rearm-count').value) });
+  if (err) { alert(err); return; }
+  for (const id of ['th-new-key', 'th-new-warning', 'th-new-critical']) $(id).value = '';
+  loadThresholds();
+}
+
+function openThresholdCopy() {
+  const from = $('th-device').value;
+  if (!from) return;
+  const others = thDevices.filter(d => d.name !== from);
+  $('th-copy-from').innerHTML = `來源設備：<strong>${esc(from)}</strong>（${esc(thRows.length)} 個閾值）`;
+  $('th-copy-list').innerHTML = others.length
+    ? others.map(d => `<label class="toggle" style="margin:2px 0"><input type="checkbox" value="${esc(d.name)}"><span>${esc(d.name)}</span></label>`).join('')
+    : '<span style="color:#aaa">沒有其他設備</span>';
+  $('th-copy-dialog').showModal();
+}
+
+async function applyThresholdCopy() {
+  const to = [...document.querySelectorAll('#th-copy-list input:checked')].map(b => b.value);
+  if (!to.length) { alert('請勾選至少一台目標設備'); return; }
+  const res = await fetch('/api/admin/device-thresholds/copy', { method: 'POST',
+    headers: {'Content-Type':'application/json'}, body: JSON.stringify({ from: $('th-device').value, to }) });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) { alert(data.error || '新增失敗'); return; }
-  for (const id of ['th-new-key', 'th-new-threshold', 'th-new-rearm', 'th-new-desc']) $(id).value = '';
+  if (!res.ok) { alert(data.error || '套用失敗'); return; }
+  closeDialog('th-copy-dialog');
+  alert(data.message || '已套用');
   loadThresholds();
 }
 
@@ -900,6 +1060,7 @@ async function loadTraps() {
   ]);
   $('mappings-body').innerHTML = mappings.length ? mappings.map(m => `<tr>
       <td><strong>${esc(m.metricName)}</strong></td>
+      <td>${severityBadge(m.severity)}</td>
       <td class="mono">${esc(m.triggeredOid)}</td>
       <td class="mono">${esc(m.resolvedOid || '—')}</td>
       <td>${esc(m.description)}</td>
@@ -909,7 +1070,7 @@ async function loadTraps() {
         <button class="btn btn-sm btn-danger"  onclick="deleteMapping(${jsArg(m.id)}, ${jsArg(m.metricName)})">刪除</button>
       </td>
     </tr>`).join('')
-    : '<tr><td colspan="6" style="color:#aaa">尚無對應</td></tr>';
+    : '<tr><td colspan="7" style="color:#aaa">尚無對應</td></tr>';
 
   const oids = unknown.unknownOids || [];
   $('unknown-oids-body').innerHTML = oids.length ? oids.map(u => `<tr>
@@ -947,6 +1108,7 @@ function openMappingDialog(m = null, fromUnknown = null) {
   $('m-triggered').value    = m ? m.triggeredOid : fromUnknown ? fromUnknown.trapOid : '';
   $('m-resolved').value     = m ? (m.resolvedOid || '') : '';
   $('m-desc').value         = m ? m.description : '';
+  $('m-severity').value     = m && m.severity ? m.severity : 'CRITICAL';
   $('m-enabled').checked    = m ? m.enabled : true;
   $('m-enabled-row').style.display = m ? '' : 'none';
   $('mapping-dialog').showModal();
@@ -956,7 +1118,7 @@ async function saveMapping() {
   const id = $('m-id').value;
   const body = { metricName: $('m-metric').value.trim(), triggeredOid: $('m-triggered').value.trim(),
                  resolvedOid: $('m-resolved').value.trim(), description: $('m-desc').value.trim(),
-                 enabled: $('m-enabled').checked };
+                 severity: $('m-severity').value, enabled: $('m-enabled').checked };
   if (!body.metricName || !body.triggeredOid) { alert('指標名稱與觸發 OID 為必填'); return; }
   if ($('m-from-unknown').value) body.fromUnknownId = parseInt($('m-from-unknown').value);
   const res = await fetch(id ? `/api/admin/trap-mappings/${encodeURIComponent(id)}` : '/api/admin/trap-mappings',
@@ -1344,18 +1506,45 @@ async function deleteDevice(name) {
 }
 
 // ── 告警記錄 ──────────────────────────────────────────────────────
+const EVENT_LABEL = { TRIGGERED: '發生', CHANGED: '等級改變', RESOLVED: '解除' };
+
 async function loadAlerts() {
+  // 設備篩選選單（保留目前選擇）
+  const devSel = $('al-device');
+  const prevDev = devSel.value;
+  const devices = await fetchDevices();
+  devSel.innerHTML = '<option value="">全部設備</option>'
+    + devices.map(d => `<option value="${esc(d.name)}">${esc(d.name)}</option>`).join('');
+  if ([...devSel.options].some(o => o.value === prevDev)) devSel.value = prevDev;
+
+  const query = { limit: 200, active: $('al-active').checked };
+  if ($('al-severity').value) query.severity = $('al-severity').value;
+  if (devSel.value) query.device = devSel.value;
+  $('al-title').textContent = query.active ? '目前未解除的告警' : '最近告警記錄';
+
   const data = await fetch('/api/v1/alerts',
-    { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({limit:100}) })
-    .then(r => r.json()).catch(() => []);
+    { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(query) })
+    .then(r => r.ok ? r.json() : []).catch(() => []);
   const tb = $('alerts-body');
-  if (!data.length) { tb.innerHTML = '<tr><td colspan="6" style="color:#aaa">尚無記錄</td></tr>'; return; }
-  tb.innerHTML = data.map(a => `<tr>
-    <td style="white-space:nowrap">${esc(a.ts.replace('T',' ').substring(0,19))}</td>
-    <td>${esc(a.deviceName)}</td><td>${esc(a.metricName)}</td>
-    <td class="${a.eventType==='TRIGGERED'?'alert-triggered':'alert-resolved'}">${esc(a.eventType)}</td>
-    <td>${esc(fmtAlertValue(a.metricName, a.value))}</td><td>${esc(fmtAlertValue(a.metricName, a.thresholdVal))}</td>
-  </tr>`).join('');
+  if (!data.length) {
+    tb.innerHTML = `<tr><td colspan="8" style="color:#aaa">${query.active ? '沒有未解除的告警' : '尚無記錄'}</td></tr>`;
+    return;
+  }
+  tb.innerHTML = data.map(a => {
+    const cls = a.eventType === 'RESOLVED' ? 'alert-resolved'
+              : a.severity === 'CRITICAL' ? 'alert-triggered' : 'alert-warning';
+    const noValue = a.metricName === 'device_unreachable' || (a.value === 0 && a.thresholdVal === 0);
+    return `<tr>
+    <td style="white-space:nowrap">${esc(String(a.ts).replace('T',' ').substring(0,19))}</td>
+    <td>${esc(a.deviceName)}</td>
+    <td>${esc(a.metricName)}${a.metricName === 'device_unreachable' ? ' <span style="color:#888;font-size:.8rem">（連線中斷）</span>' : ''}</td>
+    <td>${severityBadge(a.severity)}</td>
+    <td class="${cls}" style="white-space:nowrap">${esc(a.eventType)} ${esc(EVENT_LABEL[a.eventType] || '')}</td>
+    <td>${noValue ? '—' : esc(fmtAlertValue(a.metricName, a.value))}</td>
+    <td>${noValue ? '—' : esc(fmtAlertValue(a.metricName, a.thresholdVal))}</td>
+    <td style="max-width:320px;font-size:.85rem;color:#555">${esc(a.message || '')}</td>
+  </tr>`;
+  }).join('');
 }
 
 // cpu／memory／disk 為百分比，自訂指標顯示原始數值

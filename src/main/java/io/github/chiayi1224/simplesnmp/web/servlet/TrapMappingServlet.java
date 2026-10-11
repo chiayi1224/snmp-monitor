@@ -1,6 +1,7 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
+import io.github.chiayi1224.simplesnmp.threshold.Severity;
 import io.github.chiayi1224.simplesnmp.trap.TrapReceiver;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.servlet.http.HttpServletRequest;
@@ -23,6 +24,7 @@ import java.util.Map;
  *   "triggeredOid": "1.3.6.1.4.1.9999.1.1",
  *   "resolvedOid":  "1.3.6.1.4.1.9999.1.2",   ← 可省略（無 resolved trap 時）
  *   "description":  "CPU 使用率過高",
+ *   "severity":     "WARNING",                ← WARNING / CRITICAL，省略為 CRITICAL，不合法回 400
  *   "enabled":      true
  * }
  *
@@ -61,12 +63,13 @@ public class TrapMappingServlet extends BaseJsonServlet {
             String resolvedOid  = optText(body, "resolvedOid",  null);
             String description  = optText(body, "description",  "");
             long   fromUnknownId = optLong(body, "fromUnknownId", -1);
+            Severity severity   = parseSeverity(body, resp); if (severity == null) return;
 
             if (store.trapTriggeredOidExists(triggeredOid, -1)) {
                 writeError(resp, 409, "觸發 OID 已有對應：" + triggeredOid);
                 return;
             }
-            store.addTrapMapping(metricName, triggeredOid, resolvedOid, description);
+            store.addTrapMapping(metricName, triggeredOid, resolvedOid, description, severity);
             if (fromUnknownId > 0) store.deleteUnknownTrap(fromUnknownId);
             trapReceiver.reloadMappings(store.loadTrapMappings());
             resp.setStatus(201);
@@ -90,12 +93,13 @@ public class TrapMappingServlet extends BaseJsonServlet {
             String resolvedOid  = optText(body, "resolvedOid",  null);
             String description  = optText(body, "description",  "");
             boolean enabled     = optBool(body, "enabled", true);
+            Severity severity   = parseSeverity(body, resp); if (severity == null) return;
 
             if (store.trapTriggeredOidExists(triggeredOid, id)) {
                 writeError(resp, 409, "觸發 OID 已有對應：" + triggeredOid);
                 return;
             }
-            store.updateTrapMapping(id, metricName, triggeredOid, resolvedOid, description, enabled);
+            store.updateTrapMapping(id, metricName, triggeredOid, resolvedOid, description, severity, enabled);
             trapReceiver.reloadMappings(store.loadTrapMappings());
             writeJson(resp, Map.of("message", "更新成功", "id", id));
         } catch (Exception e) {
@@ -115,5 +119,14 @@ public class TrapMappingServlet extends BaseJsonServlet {
         } catch (Exception e) {
             writeError(resp, 500, e.getMessage());
         }
+    }
+
+    /** 省略時為 CRITICAL；不合法時回應 400 並回傳 null */
+    private Severity parseSeverity(JsonNode body, HttpServletResponse resp) throws IOException {
+        String raw = optText(body, "severity", null);
+        if (raw == null) return Severity.CRITICAL;
+        Severity s = Severity.parse(raw);
+        if (s == null) writeError(resp, 400, "severity 只能是 WARNING 或 CRITICAL");
+        return s;
     }
 }

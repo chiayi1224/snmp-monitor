@@ -1,112 +1,128 @@
 package io.github.chiayi1224.simplesnmp.threshold;
 
+import io.github.chiayi1224.simplesnmp.threshold.ThresholdConfig.Direction;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class ThresholdConfigTest {
 
-    // ─── cpu() 預設值 ─────────────────────────────────────────────
+    private static ThresholdConfig high(Double warning, Double critical, double margin) {
+        return new ThresholdConfig.Builder("cpu").warning(warning).critical(critical).rearmMargin(margin).build();
+    }
+
+    // ─── 等級判定 ─────────────────────────────────────────────────
 
     @Test
-    void cpu_預設值正確() {
-        ThresholdConfig c = ThresholdConfig.cpu();
-        assertEquals("cpu",                      c.getMetricName());
-        assertEquals(ThresholdConfig.Direction.HIGH, c.getDirection());
-        assertEquals(90.0, c.getThreshold(),  0.001);
-        assertEquals(80.0, c.getRearmValue(), 0.001);
-        assertEquals(3,    c.getTriggerCount());
-        assertEquals(2,    c.getRearmCount());
+    void rawLevel_HIGH() {
+        ThresholdConfig c = high(80.0, 95.0, 5);
+        assertNull(c.rawLevel(80.0), "等於觸發值不算超過");
+        assertEquals(Severity.WARNING, c.rawLevel(80.1));
+        assertEquals(Severity.WARNING, c.rawLevel(95.0));
+        assertEquals(Severity.CRITICAL, c.rawLevel(95.1));
     }
 
     @Test
-    void cpu_超過閾值() {
-        ThresholdConfig c = ThresholdConfig.cpu();
-        assertTrue(c.isExceeded(91.0));
-        assertFalse(c.isExceeded(90.0)); // 等於不算超過
-        assertFalse(c.isExceeded(80.0));
+    void rawLevel_只有Critical() {
+        ThresholdConfig c = high(null, 95.0, 5);
+        assertNull(c.rawLevel(90.0));
+        assertEquals(Severity.CRITICAL, c.rawLevel(96.0));
     }
 
     @Test
-    void cpu_已恢復判斷() {
-        ThresholdConfig c = ThresholdConfig.cpu();
-        assertTrue(c.isRearmed(80.0));  // 等於 rearmValue 算恢復
-        assertTrue(c.isRearmed(70.0));
-        assertFalse(c.isRearmed(85.0));
-    }
-
-    // ─── memory() 預設值 ──────────────────────────────────────────
-
-    @Test
-    void memory_預設值正確() {
-        ThresholdConfig c = ThresholdConfig.memory();
-        assertEquals("memory", c.getMetricName());
-        assertEquals(85.0, c.getThreshold(),  0.001);
-        assertEquals(75.0, c.getRearmValue(), 0.001);
-        assertEquals(3,    c.getTriggerCount());
-        assertEquals(2,    c.getRearmCount());
-    }
-
-    // ─── disk() 預設值 ────────────────────────────────────────────
-
-    @Test
-    void disk_指標名稱包含掛載點() {
-        ThresholdConfig c = ThresholdConfig.disk("/data");
-        assertEquals("disk:/data", c.getMetricName());
+    void rawLevel_LOW() {
+        ThresholdConfig c = new ThresholdConfig.Builder("free_ports").direction(Direction.LOW)
+            .warning(10.0).critical(3.0).build();
+        assertNull(c.rawLevel(10.0));
+        assertEquals(Severity.WARNING, c.rawLevel(9.0));
+        assertEquals(Severity.CRITICAL, c.rawLevel(2.0));
     }
 
     @Test
-    void disk_預設值正確() {
-        ThresholdConfig c = ThresholdConfig.disk("/");
-        assertEquals(80.0, c.getThreshold(),  0.001);
-        assertEquals(70.0, c.getRearmValue(), 0.001);
-        assertEquals(2,    c.getTriggerCount());
-        assertEquals(2,    c.getRearmCount());
-    }
-
-    // ─── Builder ──────────────────────────────────────────────────
-
-    @Test
-    void Builder_自訂參數() {
-        ThresholdConfig c = new ThresholdConfig.Builder("temp")
-            .direction(ThresholdConfig.Direction.LOW)
-            .threshold(10.0)
-            .rearmValue(20.0)
-            .triggerCount(1)
-            .rearmCount(1)
-            .build();
-
-        assertEquals("temp",                     c.getMetricName());
-        assertEquals(ThresholdConfig.Direction.LOW, c.getDirection());
-        assertEquals(10.0, c.getThreshold(),  0.001);
-        assertEquals(20.0, c.getRearmValue(), 0.001);
-        assertEquals(1,    c.getTriggerCount());
-        assertEquals(1,    c.getRearmCount());
+    void recoveredFrom_含恢復寬度() {
+        ThresholdConfig c = high(80.0, 95.0, 5);
+        assertFalse(c.recoveredFrom(Severity.CRITICAL, 90.1));
+        assertTrue(c.recoveredFrom(Severity.CRITICAL, 90.0));
+        assertFalse(c.recoveredFrom(Severity.WARNING, 75.1));
+        assertTrue(c.recoveredFrom(Severity.WARNING, 75.0));
+        assertEquals(90.0, c.recoveryValue(Severity.CRITICAL), 1e-9);
     }
 
     @Test
-    void LOW方向_isExceeded低於閾值才超過() {
-        ThresholdConfig c = new ThresholdConfig.Builder("temp")
-            .direction(ThresholdConfig.Direction.LOW)
-            .threshold(10.0)
-            .rearmValue(20.0)
-            .build();
-
-        assertTrue(c.isExceeded(9.9));
-        assertFalse(c.isExceeded(10.0));
-        assertFalse(c.isExceeded(15.0));
+    void recoveredFrom_LOW方向() {
+        ThresholdConfig c = new ThresholdConfig.Builder("free_ports").direction(Direction.LOW)
+            .critical(3.0).rearmMargin(2).build();
+        assertFalse(c.recoveredFrom(Severity.CRITICAL, 4.9));
+        assertTrue(c.recoveredFrom(Severity.CRITICAL, 5.0));
     }
 
     @Test
-    void LOW方向_isRearmed高於rearmValue才恢復() {
-        ThresholdConfig c = new ThresholdConfig.Builder("temp")
-            .direction(ThresholdConfig.Direction.LOW)
-            .threshold(10.0)
-            .rearmValue(20.0)
-            .build();
+    void recoveredFrom_未設定的等級視為已恢復() {
+        assertTrue(high(null, 95.0, 5).recoveredFrom(Severity.WARNING, 99.0));
+    }
 
-        assertTrue(c.isRearmed(20.0));
-        assertTrue(c.isRearmed(25.0));
-        assertFalse(c.isRearmed(19.9));
+    // ─── 驗證 ─────────────────────────────────────────────────────
+
+    private static String validate(String metric, Direction dir, Double w, Double c) {
+        return ThresholdConfig.validate(metric, dir, w, c, 5, 3, 2);
+    }
+
+    @Test
+    void validate_合法() {
+        assertNull(validate("cpu", Direction.HIGH, 80.0, 95.0));
+        assertNull(validate("memory", Direction.HIGH, null, 85.0));
+        assertNull(validate("disk:/data", Direction.HIGH, 70.0, null));
+        assertNull(validate("free_ports", Direction.LOW, 10.0, 3.0));
+        assertNull(validate("temperature", Direction.HIGH, 60.0, 500.0), "自訂指標不限百分比");
+    }
+
+    @Test
+    void validate_兩個觸發值都沒有() {
+        assertNotNull(validate("cpu", Direction.HIGH, null, null));
+    }
+
+    @Test
+    void validate_HIGH時Warning須小於Critical() {
+        assertTrue(validate("cpu", Direction.HIGH, 95.0, 90.0).contains("Warning"));
+        assertNotNull(validate("cpu", Direction.HIGH, 90.0, 90.0));
+    }
+
+    @Test
+    void validate_LOW時Warning須大於Critical() {
+        assertNotNull(validate("free_ports", Direction.LOW, 3.0, 10.0));
+    }
+
+    @Test
+    void validate_百分比指標方向固定HIGH() {
+        assertNotNull(validate("cpu", Direction.LOW, 20.0, 10.0));
+        assertNotNull(validate("disk:/", Direction.LOW, 20.0, 10.0));
+    }
+
+    @Test
+    void validate_百分比指標範圍() {
+        assertNotNull(validate("disk", Direction.HIGH, null, 120.0));
+        assertNotNull(validate("cpu", Direction.HIGH, 0.0, 90.0));
+        assertNull(validate("cpu", Direction.HIGH, null, 100.0));
+    }
+
+    @Test
+    void validate_恢復寬度與次數() {
+        assertNotNull(ThresholdConfig.validate("cpu", Direction.HIGH, null, 90.0, -1, 3, 2));
+        assertNull(ThresholdConfig.validate("cpu", Direction.HIGH, null, 90.0, 0, 3, 2));
+        assertNotNull(ThresholdConfig.validate("cpu", Direction.HIGH, null, 90.0, 5, 0, 2));
+        assertNotNull(ThresholdConfig.validate("cpu", Direction.HIGH, null, 90.0, 5, 3, 0));
+    }
+
+    @Test
+    void validate_方向不合法與非數字() {
+        assertNotNull(validate("cpu", null, null, 90.0));
+        assertNotNull(validate("temperature", Direction.HIGH, Double.NaN, null));
+    }
+
+    @Test
+    void Direction_解析() {
+        assertEquals(Direction.HIGH, Direction.parse(null));
+        assertEquals(Direction.LOW, Direction.parse("low"));
+        assertNull(Direction.parse("SIDEWAYS"));
     }
 }

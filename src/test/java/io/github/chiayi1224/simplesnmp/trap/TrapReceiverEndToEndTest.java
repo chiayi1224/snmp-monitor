@@ -5,6 +5,7 @@ import io.github.chiayi1224.simplesnmp.config.TrapOidMapping.Mapping;
 import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import io.github.chiayi1224.simplesnmp.threshold.AlertEvent;
+import io.github.chiayi1224.simplesnmp.threshold.Severity;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -136,6 +137,27 @@ class TrapReceiverEndToEndTest {
         ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
         verify(store, timeout(WAIT_MS)).saveAlertEvent(captor.capture());
         return captor.getValue();
+    }
+
+    // ─── 等級 ─────────────────────────────────────────────────────
+
+    @Test
+    void WARNING等級對應_觸發與解除都帶等級() throws Exception {
+        String warnHigh = "1.3.6.1.4.1.9999.3.1", warnNormal = "1.3.6.1.4.1.9999.3.2";
+        receiver.reloadMappings(List.of(new Mapping(warnHigh, warnNormal, "fan", "風扇轉速偏低", Severity.WARNING)));
+
+        sender.send(v2Trap(PDU.TRAP, warnHigh), communityTarget(SnmpConstants.version2c, "public"));
+        AlertEvent triggered = awaitAlert();
+        assertEquals(AlertEvent.Type.TRIGGERED, triggered.getType());
+        assertEquals(Severity.WARNING, triggered.getSeverity());
+
+        when(store.openAlertSeverity("Local", "fan")).thenReturn(Severity.WARNING);
+        sender.send(v2Trap(PDU.TRAP, warnNormal), communityTarget(SnmpConstants.version2c, "public"));
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(store, timeout(WAIT_MS).times(2)).saveAlertEvent(captor.capture());
+        AlertEvent resolved = captor.getAllValues().get(1);
+        assertEquals(AlertEvent.Type.RESOLVED, resolved.getType());
+        assertEquals(Severity.WARNING, resolved.getSeverity());
     }
 
     // ─── v2c ──────────────────────────────────────────────────────

@@ -82,7 +82,7 @@ public class SnmpPoller {
             return t;
         });
         scheduler.scheduleAtFixedRate(this::pollAll, 0, intervalSeconds, TimeUnit.SECONDS);
-        log.info("Poller 啟動，每 {} 秒 poll 一次", intervalSeconds);
+        log.info("Poller started, polling every {} seconds", intervalSeconds);
     }
 
     public void stop() {
@@ -99,7 +99,7 @@ public class SnmpPoller {
         // 每次 poll 前從 DB 重新讀取設備清單與範本，立即反映 Web 的設定異動
         List<DeviceConfig> devices = store.loadEnabledDevices();
         if (devices.isEmpty()) {
-            log.debug("沒有啟用的設備，略過此次 poll");
+            log.debug("No enabled devices, skipping this poll");
             return;
         }
         ProfileResolver resolver = new ProfileResolver(store.loadProfiles());
@@ -107,13 +107,13 @@ public class SnmpPoller {
         boolean pingEnabled  = store.getSettingBool("ping_enabled", true);
         int     pingTimeout  = store.getSettingInt("ping_timeout_ms", 1000);
 
-        log.debug("開始 poll，共 {} 台設備，ping={}", devices.size(), pingEnabled);
+        log.debug("Polling {} devices, ping={}", devices.size(), pingEnabled);
 
         for (DeviceConfig device : devices) {
             try {
                 pollDevice(device, resolver, pingEnabled, pingTimeout);
             } catch (Exception e) {
-                log.error("[{}] poll 失敗: {}", device.getName(), e.getMessage());
+                log.error("[{}] Poll failed: {}", device.getName(), e.getMessage());
             }
         }
     }
@@ -125,11 +125,11 @@ public class SnmpPoller {
         // ── 第一層：Ping 確認主機可達 ─────────────────────────────
         if (pingEnabled) {
             if (!isReachable(device.getHost(), pingTimeoutMs)) {
-                log.warn("[{}] Ping {} 失敗，標記 OFFLINE，跳過 SNMP poll", name, device.getHost());
-                updateStatus(name, DeviceStatus.OFFLINE);
+                log.warn("[{}] Ping {} failed, marking OFFLINE and skipping SNMP poll", name, device.getHost());
+                updateStatus(device, DeviceStatus.OFFLINE);
                 return;
             }
-            log.debug("[{}] Ping 成功", name);
+            log.debug("[{}] Ping succeeded", name);
         }
 
         // ── 第二層：依範本 GET 與 WALK ────────────────────────────
@@ -146,15 +146,15 @@ public class SnmpPoller {
                 store.updateDeviceSysObjectId(name, sysObjectId);
                 MetricProfile resolved = resolver.resolve(device.getProfileId(), sysObjectId);
                 if (!Objects.equals(resolved.id(), profile.id())) {
-                    log.info("[{}] sysObjectID={}，套用監控範本「{}」", name, sysObjectId, resolved.name());
+                    log.info("[{}] sysObjectID={}, applying metric profile \"{}\"", name, sysObjectId, resolved.name());
                     profile = resolved;
                 }
             }
             // 範本確定後才補查缺少的 OID 並走訪表格
             fetched = collector.complete(device, profile, scalars);
         } catch (SnmpException e) {
-            log.warn("[{}] SNMP 查詢失敗，標記 SNMP_ERROR：{}", name, e.getMessage());
-            updateStatus(name, DeviceStatus.SNMP_ERROR);
+            log.warn("[{}] SNMP query failed, marking SNMP_ERROR: {}", name, e.getMessage());
+            updateStatus(device, DeviceStatus.SNMP_ERROR);
             return;
         }
 
@@ -170,7 +170,7 @@ public class SnmpPoller {
         }
 
         // Ping + SNMP 均正常
-        updateStatus(name, DeviceStatus.ONLINE);
+        updateStatus(device, DeviceStatus.ONLINE);
     }
 
     /** 依指標名稱分派：cpu／memory／disk 寫既有資料表，其他寫 custom_metrics */
@@ -216,14 +216,16 @@ public class SnmpPoller {
         Long last = failureLoggedAt.get(key);
         if (last == null || now - last >= WARN_INTERVAL_MS) {
             failureLoggedAt.put(key, now);
-            log.warn("[{}] 指標 {} 本週期無數值：{}（同一指標每小時最多記錄一次）", device, metricKey, reason);
+            log.warn("[{}] Metric {} has no value this cycle: {} (logged at most once per hour per metric)", device, metricKey, reason);
         } else {
-            log.debug("[{}] 指標 {} 本週期無數值：{}", device, metricKey, reason);
+            log.debug("[{}] Metric {} has no value this cycle: {}", device, metricKey, reason);
         }
     }
 
-    private void updateStatus(String name, DeviceStatus status) {
-        store.updateDeviceStatus(name, status.name());
+    /** 更新設備狀態並評估連線中斷告警 */
+    private void updateStatus(DeviceConfig device, DeviceStatus status) {
+        store.updateDeviceStatus(device.getName(), status.name());
+        thresholdEngine.evaluateReachability(device, status);
     }
 
     // ─── Ping ─────────────────────────────────────────────────────
@@ -236,7 +238,7 @@ public class SnmpPoller {
         try {
             return InetAddress.getByName(host).isReachable(timeoutMs);
         } catch (IOException e) {
-            log.debug("isReachable 例外 host={}: {}", host, e.getMessage());
+            log.debug("isReachable failed for host={}: {}", host, e.getMessage());
             return false;
         }
     }

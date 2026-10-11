@@ -19,6 +19,9 @@ public record ProfileMetric(String metricKey, MetricKind kind, Map<String, Strin
     public static final String MEMORY = "memory";
     public static final String DISK   = "disk";
 
+    /** 設備連線中斷告警使用的指標名稱，保留給系統使用，不可作為自訂指標或閾值名稱 */
+    public static final String DEVICE_UNREACHABLE = "device_unreachable";
+
     private static final Pattern KEY_PATTERN = Pattern.compile("^[a-z][a-z0-9_]{1,31}$");
 
     public ProfileMetric {
@@ -36,6 +39,11 @@ public record ProfileMetric(String metricKey, MetricKind kind, Map<String, Strin
         return key != null && KEY_PATTERN.matcher(key).matches();
     }
 
+    /** 是否為系統保留的指標名稱 */
+    public static boolean isReservedKey(String key) {
+        return DEVICE_UNREACHABLE.equals(key);
+    }
+
     /** 是否為 CPU / 記憶體 / 磁碟以外的指標名稱 */
     public static boolean isCustomKey(String key) {
         return !CPU.equals(key) && !MEMORY.equals(key) && !DISK.equals(key);
@@ -45,6 +53,9 @@ public record ProfileMetric(String metricKey, MetricKind kind, Map<String, Strin
     public String validate() {
         if (!isValidKey(metricKey)) {
             return "指標名稱 '" + metricKey + "' 不合法：須為小寫英文開頭，只含小寫英數與底線，2～32 字元";
+        }
+        if (isReservedKey(metricKey)) {
+            return "指標名稱 '" + metricKey + "' 為系統保留名稱";
         }
         if (kind == null) {
             return "指標 " + metricKey + " 的計算類型不支援，可用：" + java.util.Arrays.toString(MetricKind.values());

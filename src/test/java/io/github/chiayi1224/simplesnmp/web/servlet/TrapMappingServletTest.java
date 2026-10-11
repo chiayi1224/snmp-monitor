@@ -1,6 +1,7 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
+import io.github.chiayi1224.simplesnmp.threshold.Severity;
 import io.github.chiayi1224.simplesnmp.trap.TrapReceiver;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -47,7 +48,7 @@ class TrapMappingServletTest {
 
         servlet.doPost(req, resp);
 
-        verify(store).addTrapMapping("fan", "1.3.6.1.4.1.9999.0.7", null, "");
+        verify(store).addTrapMapping("fan", "1.3.6.1.4.1.9999.0.7", null, "", Severity.CRITICAL);
         verify(trapReceiver).reloadMappings(any());
         verify(resp).setStatus(201);
         verify(store, never()).deleteUnknownTrap(anyLong());
@@ -59,7 +60,7 @@ class TrapMappingServletTest {
 
         servlet.doPost(req, resp);
 
-        verify(store).addTrapMapping(any(), any(), any(), any());
+        verify(store).addTrapMapping(any(), any(), any(), any(), any(Severity.class));
         verify(store).deleteUnknownTrap(42);
     }
 
@@ -71,7 +72,7 @@ class TrapMappingServletTest {
         servlet.doPost(req, resp);
 
         verify(resp).setStatus(409);
-        verify(store, never()).addTrapMapping(any(), any(), any(), any());
+        verify(store, never()).addTrapMapping(any(), any(), any(), any(), any(Severity.class));
         verify(store, never()).deleteUnknownTrap(anyLong());
     }
 
@@ -84,7 +85,7 @@ class TrapMappingServletTest {
         servlet.doPut(req, resp);
 
         verify(resp).setStatus(409);
-        verify(store, never()).updateTrapMapping(anyLong(), any(), any(), any(), any(), anyBoolean());
+        verify(store, never()).updateTrapMapping(anyLong(), any(), any(), any(), any(), any(), anyBoolean());
     }
 
     @Test
@@ -94,6 +95,37 @@ class TrapMappingServletTest {
 
         servlet.doPut(req, resp);
 
-        verify(store).updateTrapMapping(eq(5L), eq("fan2"), any(), any(), any(), eq(true));
+        verify(store).updateTrapMapping(eq(5L), eq("fan2"), any(), any(), any(), eq(Severity.CRITICAL), eq(true));
+    }
+
+    @Test
+    void 新增時指定WARNING等級() throws Exception {
+        body("{\"metricName\":\"fan\",\"triggeredOid\":\"1.3.6.1.4.1.9999.0.7\",\"severity\":\"warning\"}");
+
+        servlet.doPost(req, resp);
+
+        verify(store).addTrapMapping("fan", "1.3.6.1.4.1.9999.0.7", null, "", Severity.WARNING);
+        verify(resp).setStatus(201);
+    }
+
+    @Test
+    void 不合法的等級回傳400() throws Exception {
+        body("{\"metricName\":\"fan\",\"triggeredOid\":\"1.3.6.1.4.1.9999.0.7\",\"severity\":\"INFO\"}");
+
+        servlet.doPost(req, resp);
+
+        verify(resp).setStatus(400);
+        verify(store, never()).addTrapMapping(any(), any(), any(), any(), any(Severity.class));
+    }
+
+    @Test
+    void 更新時不合法的等級回傳400() throws Exception {
+        when(req.getPathInfo()).thenReturn("/5");
+        body("{\"metricName\":\"fan\",\"triggeredOid\":\"1.3.6.1.4.1.9999.0.7\",\"severity\":\"MAJOR\"}");
+
+        servlet.doPut(req, resp);
+
+        verify(resp).setStatus(400);
+        verify(store, never()).updateTrapMapping(anyLong(), any(), any(), any(), any(), any(), anyBoolean());
     }
 }

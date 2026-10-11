@@ -134,6 +134,54 @@ class SnmpPollerEndToEndTest {
         assertEquals("SNMP_ERROR", store.queryDeviceByName("Host-1").get("status"));
     }
 
+    // ─── 連線中斷告警 ─────────────────────────────────────────────
+
+    private List<Map<String, Object>> unreachableEvents() {
+        return store.queryAlerts("Host-1", 100).stream()
+            .filter(e -> "device_unreachable".equals(e.get("metricName"))).toList();
+    }
+
+    @Test
+    void 連線中斷_預設不告警() throws Exception {
+        agent.silent(true);
+        store.addDevice(device().build());
+        poller.pollAll();
+        poller.pollAll();
+
+        assertEquals("SNMP_ERROR", store.queryDeviceByName("Host-1").get("status"));
+        assertTrue(unreachableEvents().isEmpty());
+    }
+
+    @Test
+    void 連線中斷_CRITICAL連續2次後觸發_恢復ONLINE後解除() throws Exception {
+        agent.silent(true);
+        store.addDevice(device().unreachableSeverity("CRITICAL").unreachableCount(2).build());
+        poller.pollAll();
+        assertTrue(unreachableEvents().isEmpty(), "第 1 次不告警");
+        poller.pollAll();
+        Map<String, Object> e = unreachableEvents().get(0);
+        assertEquals("TRIGGERED", e.get("eventType"));
+        assertEquals("CRITICAL", e.get("severity"));
+        assertEquals("SNMP 無回應", e.get("message"));
+
+        agent.silent(false);
+        poller.pollAll();
+        assertEquals("RESOLVED", unreachableEvents().get(0).get("eventType"));
+        assertEquals("ONLINE", store.queryDeviceByName("Host-1").get("status"));
+    }
+
+    @Test
+    void 連線中斷_關閉設定後解除() throws Exception {
+        agent.silent(true);
+        store.addDevice(device().unreachableSeverity("WARNING").build());
+        poller.pollAll();
+        assertEquals("WARNING", unreachableEvents().get(0).get("severity"));
+
+        store.updateDeviceByName(device().unreachableSeverity("").build(), true);
+        poller.pollAll();
+        assertEquals("RESOLVED", unreachableEvents().get(0).get("eventType"));
+    }
+
     // ─── 依範本收集 ───────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
@@ -279,8 +327,9 @@ class SnmpPollerEndToEndTest {
              .put("1.3.6.1.4.1.99999.5.1.0", new Counter32(123_456));
         // temperature 的 OID 不存在；v1 會讓整個 GET 回 noSuchName，Session 需移除後重送
         customProfile(false);
-        store.createThreshold("free_ports", ThresholdConfig.Direction.LOW, 5, 8, 2, 2, "");
         store.addDevice(device().snmpVersion(DeviceConfig.SnmpVersion.V1).build());
+        store.upsertDeviceThreshold("Host-1", new ThresholdConfig.Builder("free_ports").direction(ThresholdConfig.Direction.LOW)
+            .critical(5.0).rearmMargin(3).triggerCount(2).rearmCount(2).build());
 
         poller.pollAll();
         poller.pollAll();

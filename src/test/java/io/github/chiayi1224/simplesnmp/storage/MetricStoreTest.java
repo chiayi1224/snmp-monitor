@@ -7,6 +7,7 @@ import io.github.chiayi1224.simplesnmp.profile.MetricKind;
 import io.github.chiayi1224.simplesnmp.profile.MetricProfile;
 import io.github.chiayi1224.simplesnmp.profile.ProfileMetric;
 import io.github.chiayi1224.simplesnmp.threshold.AlertEvent;
+import io.github.chiayi1224.simplesnmp.threshold.Severity;
 import io.github.chiayi1224.simplesnmp.threshold.ThresholdConfig;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -275,48 +276,118 @@ class MetricStoreTest {
 
     // ─── Alert Events ──────────────────────────────────────────────
 
+    private static AlertEvent trig(String device, String metric, Severity s) {
+        return AlertEvent.triggered(device, metric, s, 91.0, 90.0, "");
+    }
+
+    private static AlertEvent resolved(String device, String metric, Severity s) {
+        return AlertEvent.resolved(device, metric, s, 70.0, 80.0, "");
+    }
+
     @Test
-    void saveAlertEvent_TRIGGERED_hasOpenAlert回傳true() {
-        AlertEvent e = AlertEvent.triggered("Server-01", "cpu", 91.0, 90.0);
-        store.saveAlertEvent(e);
+    void saveAlertEvent_TRIGGERED_hasOpenAlert回傳true且記錄等級() {
+        store.saveAlertEvent(trig("Server-01", "cpu", Severity.WARNING));
         assertTrue(store.hasOpenAlert("Server-01", "cpu"));
+        assertEquals(Severity.WARNING, store.openAlertSeverity("Server-01", "cpu"));
+        assertEquals("WARNING", store.queryAlerts(null, 1).get(0).get("severity"));
     }
 
     @Test
     void hasOpenAlert_無告警回傳false() {
         assertFalse(store.hasOpenAlert("Server-01", "cpu"));
+        assertNull(store.openAlertSeverity("Server-01", "cpu"));
     }
 
     @Test
     void saveAlertEvent_RESOLVED後hasOpenAlert回傳false() {
-        store.saveAlertEvent(AlertEvent.triggered("Server-01", "cpu", 91.0, 90.0));
-        store.saveAlertEvent(AlertEvent.resolved("Server-01", "cpu", 79.0, 80.0));
+        store.saveAlertEvent(trig("Server-01", "cpu", Severity.CRITICAL));
+        store.saveAlertEvent(resolved("Server-01", "cpu", Severity.CRITICAL));
         assertFalse(store.hasOpenAlert("Server-01", "cpu"));
     }
 
     @Test
-    void queryAlerts_回傳正確數量() {
-        store.saveAlertEvent(AlertEvent.triggered("Server-01", "cpu",    91.0, 90.0));
-        store.saveAlertEvent(AlertEvent.triggered("Server-01", "memory", 86.0, 85.0));
-        List<Map<String, Object>> alerts = store.queryAlerts(null, 10);
-        assertTrue(alerts.size() >= 2);
+    void CHANGED為最後一筆時仍未解除_等級為CHANGED的等級() {
+        store.saveAlertEvent(trig("S", "cpu", Severity.WARNING));
+        store.saveAlertEvent(AlertEvent.changed("S", "cpu", Severity.CRITICAL, 96, 95, ""));
+        assertEquals(Severity.CRITICAL, store.openAlertSeverity("S", "cpu"));
+
+        List<Map<String, Object>> active = store.queryAlerts(null, null, true, 100);
+        assertEquals(1, active.size());
+        assertEquals("CHANGED", active.get(0).get("eventType"));
+        assertEquals("CRITICAL", active.get(0).get("severity"));
     }
 
     @Test
-    void queryAlerts_依設備過濾() {
-        store.saveAlertEvent(AlertEvent.triggered("Server-A", "cpu", 91.0, 90.0));
-        store.saveAlertEvent(AlertEvent.triggered("Server-B", "cpu", 91.0, 90.0));
-        List<Map<String, Object>> alerts = store.queryAlerts("Server-A", 10);
-        assertTrue(alerts.stream().allMatch(a -> "Server-A".equals(a.get("deviceName"))));
+    void queryAlerts_只看未解除() {
+        store.saveAlertEvent(trig("A", "cpu", Severity.CRITICAL));
+        store.saveAlertEvent(resolved("A", "cpu", Severity.CRITICAL));
+        store.saveAlertEvent(trig("A", "memory", Severity.WARNING));
+        store.saveAlertEvent(trig("B", "cpu", Severity.CRITICAL));
+
+        List<Map<String, Object>> active = store.queryAlerts(null, null, true, 100);
+        assertEquals(2, active.size());
+        assertTrue(active.stream().noneMatch(a -> "A".equals(a.get("deviceName")) && "cpu".equals(a.get("metricName"))));
+
+        List<Map<String, Object>> activeA = store.queryAlerts("A", null, true, 100);
+        assertEquals(1, activeA.size());
+        assertEquals("memory", activeA.get(0).get("metricName"));
+        assertEquals("WARNING", activeA.get(0).get("severity"));
     }
 
     @Test
-    void queryAlerts_limit限制筆數() {
-        for (int i = 0; i < 5; i++) {
-            store.saveAlertEvent(AlertEvent.triggered("S", "cpu", 91.0, 90.0));
-        }
-        List<Map<String, Object>> alerts = store.queryAlerts(null, 3);
-        assertEquals(3, alerts.size());
+    void queryAlerts_依等級篩選() {
+        store.saveAlertEvent(trig("A", "cpu", Severity.CRITICAL));
+        store.saveAlertEvent(trig("A", "memory", Severity.WARNING));
+        List<Map<String, Object>> critical = store.queryAlerts(null, Severity.CRITICAL, false, 100);
+        assertEquals(1, critical.size());
+        assertEquals("cpu", critical.get(0).get("metricName"));
+    }
+
+    @Test
+    void queryAlerts_依設備過濾_新到舊_limit() {
+        store.saveAlertEvent(trig("Server-A", "cpu", Severity.CRITICAL));
+        store.saveAlertEvent(trig("Server-B", "cpu", Severity.CRITICAL));
+        for (int i = 0; i < 4; i++) store.saveAlertEvent(trig("Server-A", "m" + i, Severity.WARNING));
+
+        List<Map<String, Object>> a = store.queryAlerts("Server-A", 10);
+        assertEquals(5, a.size());
+        assertTrue(a.stream().allMatch(x -> "Server-A".equals(x.get("deviceName"))));
+        assertEquals("m3", a.get(0).get("metricName"), "新到舊");
+        assertEquals(3, store.queryAlerts(null, 3).size());
+    }
+
+    @Test
+    void resolveOpenAlerts_只解除符合條件的未解除告警並沿用等級() throws SQLException {
+        store.saveAlertEvent(trig("A", "cpu", Severity.WARNING));
+        store.saveAlertEvent(trig("A", "disk:/data", Severity.CRITICAL));
+        store.saveAlertEvent(trig("A", "disk:/", Severity.CRITICAL));
+        store.saveAlertEvent(resolved("A", "disk:/", Severity.CRITICAL));
+
+        assertEquals(1, store.resolveOpenAlerts("A", m -> m.startsWith("disk:"), "磁碟已不在監控範圍"));
+        assertNull(store.openAlertSeverity("A", "disk:/data"));
+        assertEquals(Severity.WARNING, store.openAlertSeverity("A", "cpu"));
+        Map<String, Object> last = store.queryAlerts("A", 1).get(0);
+        assertEquals("RESOLVED", last.get("eventType"));
+        assertEquals("CRITICAL", last.get("severity"));
+        assertEquals("磁碟已不在監控範圍", last.get("message"));
+    }
+
+    @Test
+    void 刪除設備_刪除其閾值並解除其告警_歷史保留() throws SQLException {
+        store.addDevice(new DeviceConfig("A", "10.0.0.1", "public"));
+        store.addDevice(new DeviceConfig("B", "10.0.0.2", "public"));
+        store.upsertDeviceThreshold("A", critical("cpu", 90.0));
+        store.upsertDeviceThreshold("B", critical("cpu", 90.0));
+        store.saveAlertEvent(trig("A", "cpu", Severity.CRITICAL));
+
+        store.deleteDeviceByName("A");
+
+        assertTrue(store.queryDeviceThresholds("A").isEmpty());
+        assertEquals(1, store.queryDeviceThresholds("B").size(), "其他設備不受影響");
+        assertTrue(store.queryAlerts(null, null, true, 100).isEmpty());
+        List<Map<String, Object>> history = store.queryAlerts("A", 10);
+        assertEquals(2, history.size());
+        assertEquals("設備已刪除", history.get(0).get("message"));
     }
 
     // ─── 設備 SNMP 版本與 v3 設定 ───────────────────────────────
@@ -605,81 +676,180 @@ class MetricStoreTest {
         assertEquals(BuiltinProfiles.HOST_RESOURCES, store.queryDeviceByName("Core-SW").get("appliedProfileName"));
     }
 
-    // ─── 自訂指標閾值 ─────────────────────────────────────────────
+    // ─── 每台設備的閾值 ───────────────────────────────────────────
 
-    @Test
-    void 閾值_自訂指標未設定回傳null_內建三項有預設() {
-        assertNull(store.loadThresholdConfig("temperature"));
-        assertNotNull(store.loadThresholdConfig("cpu"));
-        assertNotNull(store.loadThresholdConfig("disk:/home"));
-        assertEquals("disk:/home", store.loadThresholdConfig("disk:/home").getMetricName());
+    private static ThresholdConfig critical(String metric, double critical) {
+        return new ThresholdConfig.Builder(metric).critical(critical).rearmMargin(10).triggerCount(3).rearmCount(2).build();
     }
 
     @Test
-    void 閾值_新增自訂LOW方向後可載入_刪除後回到null() throws SQLException {
-        long id = store.createThreshold("free_ports", ThresholdConfig.Direction.LOW, 5, 8, 2, 2, "可用埠數");
-        assertTrue(store.thresholdExists("free_ports"));
-        assertEquals("free_ports", store.thresholdMetricName(id));
-
-        ThresholdConfig cfg = store.loadThresholdConfig("free_ports");
-        assertEquals(ThresholdConfig.Direction.LOW, cfg.getDirection());
-        assertEquals(5.0, cfg.getThreshold());
-        assertTrue(cfg.isExceeded(2));
-
-        Map<String, Object> row = store.queryAllThresholds().stream()
-            .filter(r -> "free_ports".equals(r.get("metricName"))).findFirst().orElseThrow();
-        assertEquals("LOW", row.get("direction"));
-        assertEquals(false, row.get("builtin"));
-
-        store.updateThreshold(id, ThresholdConfig.Direction.HIGH, 50, 40, 1, 1);
-        assertEquals(ThresholdConfig.Direction.HIGH, store.loadThresholdConfig("free_ports").getDirection());
-
-        store.deleteThreshold(id);
-        assertNull(store.loadThresholdConfig("free_ports"));
-        assertNull(store.thresholdMetricName(id));
+    void 閾值_全新安裝沒有任何閾值() throws SQLException {
+        store.addDevice(new DeviceConfig("A", "10.0.0.1", "public"));
+        assertNull(store.loadThreshold("A", "cpu"));
+        assertNull(store.loadThreshold("A", "disk:/"));
+        assertTrue(store.queryDeviceThresholds("A").isEmpty());
+        assertTrue(store.countDeviceThresholds().isEmpty());
     }
 
     @Test
-    void 閾值_內建三項方向為HIGH且標記builtin() {
-        List<Map<String, Object>> rows = store.queryAllThresholds();
-        assertEquals(3, rows.size());
-        for (Map<String, Object> r : rows) {
-            assertEquals("HIGH", r.get("direction"));
-            assertEquals(true, r.get("builtin"));
+    void 閾值_upsert取代同名_兩台設備互不影響() throws SQLException {
+        long id1 = store.upsertDeviceThreshold("A", critical("cpu", 80.0));
+        long id2 = store.upsertDeviceThreshold("A", new ThresholdConfig.Builder("cpu").warning(70.0).critical(90.0)
+            .rearmMargin(5).triggerCount(2).rearmCount(1).build());
+        store.upsertDeviceThreshold("B", critical("cpu", 95.0));
+
+        assertEquals(id1, id2, "同一設備同一指標只有一筆");
+        assertEquals(1, store.queryDeviceThresholds("A").size());
+        ThresholdConfig a = store.loadThreshold("A", "cpu");
+        assertEquals(70.0, a.getWarning());
+        assertEquals(90.0, a.getCritical());
+        assertEquals(5.0, a.getRearmMargin());
+        assertEquals(95.0, store.loadThreshold("B", "cpu").getCritical());
+        assertEquals(Map.of("A", 1L, "B", 1L), store.countDeviceThresholds());
+
+        Map<String, Object> row = store.queryDeviceThreshold(id1);
+        assertEquals("A", row.get("deviceName"));
+        assertEquals(70.0, row.get("warning"));
+    }
+
+    @Test
+    void 閾值_Warning為null時讀回null_LOW方向() throws SQLException {
+        store.upsertDeviceThreshold("A", new ThresholdConfig.Builder("free_ports")
+            .direction(ThresholdConfig.Direction.LOW).warning(10.0).build());
+        ThresholdConfig c = store.loadThreshold("A", "free_ports");
+        assertEquals(ThresholdConfig.Direction.LOW, c.getDirection());
+        assertNull(c.getCritical());
+        assertEquals("LOW", store.queryDeviceThresholds("A").get(0).get("direction"));
+    }
+
+    @Test
+    void 閾值_磁碟預設與掛載點覆寫() throws SQLException {
+        store.upsertDeviceThreshold("A", critical("disk", 80.0));
+        store.upsertDeviceThreshold("A", critical("disk:/data", 95.0));
+
+        assertEquals(80.0, store.loadThreshold("A", "disk:/").getCritical());
+        assertEquals("disk:/", store.loadThreshold("A", "disk:/").getMetricName(), "保留掛載點名稱");
+        assertEquals(95.0, store.loadThreshold("A", "disk:/data").getCritical(), "覆寫優先");
+    }
+
+    @Test
+    void 閾值_只有覆寫時其他掛載點沒有閾值() throws SQLException {
+        store.upsertDeviceThreshold("A", critical("disk:/data", 95.0));
+        assertNull(store.loadThreshold("A", "disk:/"));
+    }
+
+    @Test
+    void 閾值_刪除() throws SQLException {
+        long id = store.upsertDeviceThreshold("A", critical("cpu", 80.0));
+        store.deleteDeviceThreshold(id);
+        assertNull(store.loadThreshold("A", "cpu"));
+        assertNull(store.queryDeviceThreshold(id));
+    }
+
+    @Test
+    void 閾值_複製_同名取代_目標其他保留_連線中斷設定一併複製() throws SQLException {
+        store.addDevice(new DeviceConfig.Builder("A", "10.0.0.1").unreachableSeverity("CRITICAL").unreachableCount(3).build());
+        store.addDevice(new DeviceConfig("B", "10.0.0.2", "public"));
+        store.addDevice(new DeviceConfig("C", "10.0.0.3", "public"));
+        store.upsertDeviceThreshold("A", critical("cpu", 80.0));
+        store.upsertDeviceThreshold("A", critical("disk", 85.0));
+        store.upsertDeviceThreshold("B", critical("cpu", 99.0));
+        store.upsertDeviceThreshold("B", critical("temperature", 70.0));
+
+        store.copyDeviceThresholds("A", List.of("B", "C"));
+
+        assertEquals(80.0, store.loadThreshold("B", "cpu").getCritical());
+        assertEquals(85.0, store.loadThreshold("B", "disk").getCritical());
+        assertEquals(70.0, store.loadThreshold("B", "temperature").getCritical(), "目標有、來源沒有的保留");
+        assertEquals(2, store.queryDeviceThresholds("C").size());
+        assertEquals(2, store.queryDeviceThresholds("A").size(), "來源不受影響");
+        assertEquals("CRITICAL", store.loadDevice("C").getUnreachableSeverity());
+        assertEquals(3, store.loadDevice("C").getUnreachableCount());
+    }
+
+    // ─── 全域閾值升級轉換 ─────────────────────────────────────────
+
+    /** 建立升級前的 DB：兩台設備、全域閾值（cpu 90/80/3/2、disk 80/70/2/2、自訂 LOW） */
+    private static String legacyThresholdDb(Path dir) throws Exception {
+        String dbPath = dir.resolve("legacy-thresholds.db").toString();
+        try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
+             Statement st = c.createStatement()) {
+            st.execute("""
+                CREATE TABLE devices (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, host TEXT NOT NULL,
+                    port INTEGER NOT NULL DEFAULT 161, community TEXT NOT NULL DEFAULT 'public',
+                    enabled INTEGER NOT NULL DEFAULT 1, created TEXT NOT NULL, updated TEXT NOT NULL)
+                """);
+            st.execute("INSERT INTO devices(name, host, created, updated) VALUES('A', '10.0.0.1', 'x', 'x')");
+            st.execute("INSERT INTO devices(name, host, created, updated) VALUES('B', '10.0.0.2', 'x', 'x')");
+            st.execute("""
+                CREATE TABLE threshold_settings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, metric_name TEXT NOT NULL UNIQUE,
+                    threshold REAL NOT NULL, rearm REAL NOT NULL, trigger_count INTEGER NOT NULL,
+                    rearm_count INTEGER NOT NULL, description TEXT NOT NULL DEFAULT '', updated TEXT NOT NULL,
+                    direction TEXT NOT NULL DEFAULT 'HIGH')
+                """);
+            st.execute("INSERT INTO threshold_settings(metric_name, threshold, rearm, trigger_count, rearm_count, updated) VALUES('cpu', 90, 80, 3, 2, 'x')");
+            st.execute("INSERT INTO threshold_settings(metric_name, threshold, rearm, trigger_count, rearm_count, updated) VALUES('disk', 80, 70, 2, 2, 'x')");
+            st.execute("INSERT INTO threshold_settings(metric_name, threshold, rearm, trigger_count, rearm_count, updated, direction) VALUES('free_ports', 5, 8, 2, 2, 'x', 'LOW')");
+            st.execute("""
+                CREATE TABLE alert_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, device_name TEXT NOT NULL,
+                    metric_name TEXT NOT NULL, event_type TEXT NOT NULL, value REAL NOT NULL, threshold_val REAL NOT NULL)
+                """);
+            st.execute("INSERT INTO alert_events(ts, device_name, metric_name, event_type, value, threshold_val) VALUES('2026-01-01T00:00:00Z', 'A', 'cpu', 'TRIGGERED', 95, 90)");
+        }
+        return dbPath;
+    }
+
+    @Test
+    void 升級轉換_全域閾值轉成每台設備的Critical_舊告警為CRITICAL(@TempDir Path dir) throws Exception {
+        String dbPath = legacyThresholdDb(dir);
+        try (MetricStore upgraded = new MetricStore(dbPath)) {
+            for (String device : List.of("A", "B")) {
+                ThresholdConfig cpu = upgraded.loadThreshold(device, "cpu");
+                assertNull(cpu.getWarning());
+                assertEquals(90.0, cpu.getCritical());
+                assertEquals(10.0, cpu.getRearmMargin(), 1e-9);
+                assertEquals(3, cpu.getTriggerCount());
+                assertEquals(2, cpu.getRearmCount());
+                assertEquals(80.0, upgraded.loadThreshold(device, "disk:/").getCritical());
+                ThresholdConfig ports = upgraded.loadThreshold(device, "free_ports");
+                assertEquals(ThresholdConfig.Direction.LOW, ports.getDirection());
+                assertEquals(3.0, ports.getRearmMargin(), 1e-9);
+            }
+            assertEquals(Severity.CRITICAL, upgraded.openAlertSeverity("A", "cpu"), "升級前的事件視為 CRITICAL");
+            assertEquals("CRITICAL", upgraded.queryAlerts("A", 1).get(0).get("severity"));
+            assertEquals("CRITICAL", upgraded.queryAllTrapMappings().get(0).get("severity"));
+
+            // 轉換後新增的設備沒有閾值；管理者刪除 A 的 cpu 閾值
+            upgraded.addDevice(new DeviceConfig("C", "10.0.0.3", "public"));
+            assertTrue(upgraded.queryDeviceThresholds("C").isEmpty());
+            long id = (Long) upgraded.queryDeviceThresholds("A").stream()
+                .filter(r -> "cpu".equals(r.get("metricName"))).findFirst().orElseThrow().get("id");
+            upgraded.deleteDeviceThreshold(id);
+        }
+        try (MetricStore again = new MetricStore(dbPath)) {
+            assertNull(again.loadThreshold("A", "cpu"), "轉換只執行一次");
+            assertTrue(again.queryDeviceThresholds("C").isEmpty());
         }
     }
 
-    // ─── 自訂指標 ─────────────────────────────────────────────────
-
     @Test
-    void 自訂指標_最新狀態每個指標取最後一筆_既有欄位不變() throws Exception {
-        store.saveCpu("SW-01", 10.0);
-        store.saveCustomMetric("SW-01", "temperature", 40.0, "°C");
-        Thread.sleep(5);   // 時間欄位為 ISO-8601 字串，間隔確保排序
-        store.saveCustomMetric("SW-01", "temperature", 45.0, "°C");
-        store.saveCustomMetric("SW-01", "free_ports", 3.0, "");
-
-        Map<String, Object> s = store.queryLatestStatus().stream()
-            .filter(m -> "SW-01".equals(m.get("deviceName"))).findFirst().orElseThrow();
-        assertEquals(List.of("deviceName", "cpu", "memory", "disks", "custom"), List.copyOf(s.keySet()));
-        assertNotNull(s.get("cpu"));
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> custom = (List<Map<String, Object>>) s.get("custom");
-        assertEquals(2, custom.size());
-        assertEquals("free_ports", custom.get(0).get("metricKey"));
-        assertEquals("temperature", custom.get(1).get("metricKey"));
-        assertEquals(45.0, custom.get(1).get("value"));
-        assertEquals("°C", custom.get(1).get("unit"));
-    }
-
-    @Test
-    void 自訂指標_只有自訂指標的設備也出現在狀態查詢() {
-        store.saveCustomMetric("UPS-01", "battery_pct", 98.0, "%");
-        Map<String, Object> s = store.queryLatestStatus().stream()
-            .filter(m -> "UPS-01".equals(m.get("deviceName"))).findFirst().orElseThrow();
-        assertNull(s.get("cpu"));
-        assertEquals(1, ((List<?>) s.get("custom")).size());
+    void 升級轉換_轉換後的設定與舊版觸發恢復結果相同(@TempDir Path dir) throws Exception {
+        String dbPath = legacyThresholdDb(dir);
+        try (MetricStore upgraded = new MetricStore(dbPath)) {
+            ThresholdConfig cfg = upgraded.loadThreshold("B", "cpu");
+            io.github.chiayi1224.simplesnmp.threshold.ThresholdState state =
+                new io.github.chiayi1224.simplesnmp.threshold.ThresholdState("B", "cpu");
+            // 舊版：超過 90 連續 3 次觸發、80 以下連續 2 次恢復
+            assertNull(state.evaluate(cfg, 91));
+            assertNull(state.evaluate(cfg, 91));
+            assertEquals(AlertEvent.Type.TRIGGERED, state.evaluate(cfg, 91).getType());
+            assertNull(state.evaluate(cfg, 80.5), "80 以上不算恢復");
+            assertNull(state.evaluate(cfg, 80));
+            assertEquals(AlertEvent.Type.RESOLVED, state.evaluate(cfg, 79).getType());
+        }
     }
 
     // ─── Poll OID 升級轉換（D8）────────────────────────────────────

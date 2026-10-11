@@ -412,6 +412,15 @@ assert_status "觸發 OID 重複回 409" 409
 call DELETE "/api/admin/trap-mappings/${TRAP_ID}"
 assert_status "刪除 Trap 對應" 200
 
+call POST /api/admin/trap-mappings -d '{"metricName":"fan","triggeredOid":"1.3.6.1.4.1.9999.6.1","severity":"WARNING"}'
+assert_status "新增 WARNING 等級的 Trap 對應" 201
+call GET /api/admin/trap-mappings
+assert_contains "對應含等級 WARNING" '"severity" : "WARNING"'
+assert_contains "未指定等級為 CRITICAL" '"severity" : "CRITICAL"'
+call POST /api/admin/trap-mappings -d '{"metricName":"fan2","triggeredOid":"1.3.6.1.4.1.9999.6.2","severity":"INFO"}'
+assert_status "Trap 對應等級不合法回 400" 400
+
+
 call GET /api/admin/trap-mappings
 assert_not_contains "刪除後 temperature 消失" "temperature"
 
@@ -468,59 +477,75 @@ call PUT /api/admin/settings/no_such_setting -d '{"value":"1"}'
 assert_status "不存在的設定回 404" 404
 
 # ═════════════════════════════════════════════════════════════════
-section "9. 閾值設定 API"
+section "9. 每台設備閾值 API"
 # ═════════════════════════════════════════════════════════════════
 
 call GET /api/admin/thresholds
-assert_status "列出閾值設定" 200
-assert_contains "含 cpu" "cpu"
-assert_contains "含 memory" "memory"
-assert_contains "含 disk" "disk"
+assert_status "已移除的全域閾值 API 回 404" 404
 
-THRESHOLD_ID=$(jq_field '.[] | select(.metricName=="cpu") | .id')
-THRESHOLD_ID=${THRESHOLD_ID:-1}
-log "cpu threshold id=$THRESHOLD_ID"
+call GET "/api/admin/device-thresholds?device=Router-01"
+assert_status "列出 Router-01 閾值" 200
+assert_contains "新設備沒有預設閾值" '"thresholds" : \[ \]'
+assert_contains "可選指標含 disk" '"disk"'
 
-call PUT "/api/admin/thresholds/${THRESHOLD_ID}" \
-  -d '{"threshold":85,"rearm":75,"triggerCount":2,"rearmCount":2}'
-assert_status "更新 cpu 閾值" 200
+call PUT /api/admin/device-thresholds -d '{"device":"Router-01","metricName":"cpu","warning":80,"critical":95,"rearmMargin":5,"triggerCount":3,"rearmCount":2}'
+assert_status "新增 Router-01 cpu 兩段閾值" 200
+CPU_TH_ID=$(jq_field '.id')
 
-call GET /api/admin/thresholds
-assert_contains "cpu threshold 更新為 85" '"threshold" : 85'
+call PUT /api/admin/device-thresholds -d '{"device":"Router-01","metricName":"cpu","warning":null,"critical":90,"rearmMargin":10,"triggerCount":3,"rearmCount":2}'
+assert_status "同名指標以新值取代" 200
+call GET "/api/admin/device-thresholds?device=Router-01"
+assert_contains "取代後 critical 為 90" '"critical" : 90'
+assert_contains "取代後 warning 為 null" '"warning" : null'
 
-call PUT "/api/admin/thresholds/${THRESHOLD_ID}" \
-  -d '{"threshold":110,"rearm":75,"triggerCount":2,"rearmCount":2}'
-assert_status "threshold > 100 回 400" 400
+call PUT /api/admin/device-thresholds -d '{"device":"Router-01","metricName":"disk","critical":80,"rearmMargin":10,"triggerCount":2,"rearmCount":2}'
+assert_status "新增磁碟設備預設" 200
+call PUT /api/admin/device-thresholds -d '{"device":"Router-01","metricName":"disk:/data","critical":95,"rearmMargin":5,"triggerCount":2,"rearmCount":2}'
+assert_status "新增掛載點覆寫" 200
+call PUT /api/admin/device-thresholds -d '{"device":"Router-01","metricName":"free_ports","direction":"LOW","warning":10,"critical":3,"rearmMargin":2,"triggerCount":2,"rearmCount":2}'
+assert_status "新增自訂 LOW 閾值" 200
 
-call PUT "/api/admin/thresholds/${THRESHOLD_ID}" \
-  -d '{"threshold":85,"rearm":90,"triggerCount":2,"rearmCount":2}'
-assert_status "rearm >= threshold 回 400" 400
+call PUT /api/admin/device-thresholds -d '{"device":"Router-01","metricName":"cpu"}'
+assert_status "沒有任何觸發值回 400" 400
+call PUT /api/admin/device-thresholds -d '{"device":"Router-01","metricName":"cpu","warning":95,"critical":90}'
+assert_status "Warning 高於 Critical 回 400" 400
+call PUT /api/admin/device-thresholds -d '{"device":"Router-01","metricName":"cpu","direction":"LOW","warning":20,"critical":10}'
+assert_status "內建指標改 LOW 回 400" 400
+call PUT /api/admin/device-thresholds -d '{"device":"Router-01","metricName":"disk","critical":120}'
+assert_status "百分比超過 100 回 400" 400
+call PUT /api/admin/device-thresholds -d '{"device":"Router-01","metricName":"device_unreachable","critical":1}'
+assert_status "保留名稱回 400" 400
+call PUT /api/admin/device-thresholds -d '{"device":"NoSuchDevice","metricName":"cpu","critical":90}'
+assert_status "設備不存在回 404" 404
 
-# ── 自訂指標閾值 ──────────────────────────────────────────────────
-call POST /api/admin/thresholds -d '{"metricName":"free_ports","direction":"LOW","threshold":5,"rearm":8,"triggerCount":2,"rearmCount":2,"description":"可用埠數"}'
-assert_status "新增自訂 LOW 閾值" 201
-CUSTOM_THRESHOLD_ID=$(jq_field '.id')
+call GET "/api/admin/device-thresholds?device=Switch-01"
+assert_contains "Router-01 的閾值不影響 Switch-01" '"thresholds" : \[ \]'
 
-call GET /api/admin/thresholds
-assert_contains "清單含自訂閾值方向 LOW" '"direction" : "LOW"'
+call POST /api/admin/device-thresholds/copy -d '{"from":"Router-01","to":["Switch-01"]}'
+assert_status "複製閾值到 Switch-01" 200
+call GET "/api/admin/device-thresholds?device=Switch-01"
+assert_contains "Switch-01 取得 disk:/data 覆寫" 'disk:/data'
+assert_contains "Switch-01 取得 free_ports" 'free_ports'
 
-call POST /api/admin/thresholds -d '{"metricName":"free_ports","threshold":5,"rearm":8}'
-assert_status "自訂閾值名稱重複回 409" 409
+call POST /api/admin/device-thresholds/copy -d '{"from":"Router-01","to":["Switch-01","NoSuchDevice"]}'
+assert_status "目標不存在回 400" 400
 
-call POST /api/admin/thresholds -d '{"metricName":"cpu","threshold":90,"rearm":80}'
-assert_status "以內建名稱新增回 409" 409
+call GET /api/admin/device-thresholds
+assert_contains "閾值筆數統計含 Router-01" '"Router-01" : 4'
 
-call POST /api/admin/thresholds -d '{"metricName":"temperature","direction":"LOW","threshold":5,"rearm":3}'
-assert_status "LOW 方向 rearm <= threshold 回 400" 400
+call DELETE "/api/admin/device-thresholds/${CPU_TH_ID}"
+assert_status "刪除閾值" 200
+call DELETE "/api/admin/device-thresholds/${CPU_TH_ID}"
+assert_status "刪除不存在的閾值回 404" 404
 
-call PUT "/api/admin/thresholds/${CUSTOM_THRESHOLD_ID}" -d '{"direction":"HIGH","threshold":5000,"rearm":1000,"triggerCount":1,"rearmCount":1}'
-assert_status "自訂閾值可改方向且不限百分比" 200
-
-call DELETE "/api/admin/thresholds/${THRESHOLD_ID}"
-assert_status "刪除內建閾值回 403" 403
-
-call DELETE "/api/admin/thresholds/${CUSTOM_THRESHOLD_ID}"
-assert_status "刪除自訂閾值" 200
+# 連線中斷告警設定
+call POST "/api/admin/devices/Switch-01" -d '{"host":"192.168.1.2","unreachableSeverity":"CRITICAL","unreachableCount":2}'
+assert_status "設定連線中斷告警" 200
+call POST /api/v1/devices/Switch-01 -d '{}'
+assert_contains "連線中斷告警等級已儲存" '"unreachableSeverity" : "CRITICAL"'
+assert_contains "連續次數已儲存" '"unreachableCount" : 2'
+call POST "/api/admin/devices/Switch-01" -d '{"host":"192.168.1.2","unreachableSeverity":"INFO"}'
+assert_status "連線中斷告警等級不合法回 400" 400
 
 # ═════════════════════════════════════════════════════════════════
 section "10. SNMPv3 使用者 API"
@@ -584,6 +609,12 @@ assert_status "POST /api/v1/alerts 帶 device/limit 參數" 200
 
 call POST /api/v1/alerts -d '{"limit":"abc"}'
 assert_status "limit 非數字靜默忽略回 200" 200
+
+call POST /api/v1/alerts -d '{"severity":"CRITICAL","active":true}'
+assert_status "依等級與未解除篩選" 200
+
+call POST /api/v1/alerts -d '{"severity":"MAJOR"}'
+assert_status "不合法的等級回 400" 400
 
 # ═════════════════════════════════════════════════════════════════
 section "14. 狀態查詢 API"

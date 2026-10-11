@@ -1,5 +1,7 @@
 package io.github.chiayi1224.simplesnmp.config;
 
+import io.github.chiayi1224.simplesnmp.threshold.Severity;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -39,8 +41,19 @@ public class TrapOidMapping {
      * @param resolvedOid   代表「告警恢復」的 trap OID（null = 該指標沒有 resolved trap）
      * @param metricName    對應的指標名稱（對應 alert_events.metric_name）
      * @param description   說明文字，例如 "CPU 使用率過高"
+     * @param severity      收到觸發 OID 時產生的告警等級（null 視為 CRITICAL）
      */
-    public record Mapping(String triggeredOid, String resolvedOid, String metricName, String description) {
+    public record Mapping(String triggeredOid, String resolvedOid, String metricName, String description,
+                          Severity severity) {
+        public Mapping {
+            if (severity == null) severity = Severity.CRITICAL;
+        }
+
+        /** 未指定等級時為 CRITICAL */
+        public Mapping(String triggeredOid, String resolvedOid, String metricName, String description) {
+            this(triggeredOid, resolvedOid, metricName, description, Severity.CRITICAL);
+        }
+
         public boolean hasResolved() { return resolvedOid != null && !resolvedOid.isBlank(); }
     }
 

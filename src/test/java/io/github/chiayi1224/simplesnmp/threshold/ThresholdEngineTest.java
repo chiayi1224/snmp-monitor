@@ -1,206 +1,239 @@
 package io.github.chiayi1224.simplesnmp.threshold;
 
+import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
+import io.github.chiayi1224.simplesnmp.model.DeviceStatus;
 import io.github.chiayi1224.simplesnmp.model.DiskInfo;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-import org.mockito.ArgumentCaptor;
 
 import java.util.List;
+import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.startsWith;
-import static org.mockito.Mockito.*;
-
-@ExtendWith(MockitoExtension.class)
+/**
+ * 閾值引擎：以 in-memory DB 驗證每設備閾值、磁碟覆寫、閾值移除、重啟還原與連線中斷告警
+ */
 class ThresholdEngineTest {
 
-    @Mock
-    MetricStore store;
-
-    ThresholdEngine engine;
+    private MetricStore     store;
+    private ThresholdEngine engine;
 
     @BeforeEach
-    void setUp() {
-        // 讓 mock 回傳對應的預設閾值設定，避免 NPE（lenient 允許部分測試未使用所有 stub）
-        lenient().when(store.loadThresholdConfig("cpu")).thenReturn(ThresholdConfig.cpu());
-        lenient().when(store.loadThresholdConfig("memory")).thenReturn(ThresholdConfig.memory());
-        lenient().when(store.loadThresholdConfig(startsWith("disk:"))).thenAnswer(inv ->
-            ThresholdConfig.disk(inv.getArgument(0, String.class).substring("disk:".length()))
-        );
+    void setUp() throws Exception {
+        store  = new MetricStore(":memory:");
         engine = new ThresholdEngine(store);
     }
 
-    // ─── CPU ──────────────────────────────────────────────────────
+    @AfterEach
+    void tearDown() throws Exception {
+        store.close();
+    }
+
+    private void threshold(String device, String metric, Double warning, Double critical) throws Exception {
+        store.upsertDeviceThreshold(device, new ThresholdConfig.Builder(metric).warning(warning).critical(critical)
+            .rearmMargin(5).triggerCount(3).rearmCount(2).build());
+    }
+
+    private List<Map<String, Object>> events(String device) {
+        return store.queryAlerts(device, 100);
+    }
+
+    private Map<String, Object> last(String device) {
+        List<Map<String, Object>> e = events(device);
+        return e.isEmpty() ? null : e.get(0);
+    }
+
+    private void cpu(String device, double... values) {
+        for (double v : values) engine.evaluateCpu(device, v);
+    }
+
+    // ─── 每設備閾值 ───────────────────────────────────────────────
 
     @Test
-    void evaluateCpu_未超過閾值不寫DB() {
-        engine.evaluateCpu("Server-01", 85.0);
-        engine.evaluateCpu("Server-01", 88.0);
-        verify(store, never()).saveAlertEvent(any());
+    void 兩台設備不同門檻() throws Exception {
+        threshold("A", "cpu", null, 80.0);
+        threshold("B", "cpu", null, 95.0);
+        cpu("A", 90, 90, 90);
+        cpu("B", 90, 90, 90);
+
+        assertEquals("CRITICAL", last("A").get("severity"));
+        assertTrue(events("B").isEmpty());
     }
 
     @Test
-    void evaluateCpu_連續三次超過寫一次DB() {
-        engine.evaluateCpu("Server-01", 91.0);
-        engine.evaluateCpu("Server-01", 92.0);
-        engine.evaluateCpu("Server-01", 93.0);
-        verify(store, times(1)).saveAlertEvent(any());
+    void 沒有閾值不告警() {
+        cpu("A", 100, 100, 100, 100);
+        engine.evaluate("A", "temperature", 999);
+        assertTrue(events("A").isEmpty());
     }
 
     @Test
-    void evaluateCpu_觸發後持續超過不重複寫DB() {
-        engine.evaluateCpu("Server-01", 91.0);
-        engine.evaluateCpu("Server-01", 92.0);
-        engine.evaluateCpu("Server-01", 93.0); // 觸發
-        engine.evaluateCpu("Server-01", 95.0);
-        engine.evaluateCpu("Server-01", 95.0);
-        verify(store, times(1)).saveAlertEvent(any());
+    void Warning觸發後升級為Critical並記錄等級() throws Exception {
+        threshold("A", "cpu", 80.0, 95.0);
+        cpu("A", 85, 85, 85);
+        assertEquals("TRIGGERED", last("A").get("eventType"));
+        assertEquals("WARNING", last("A").get("severity"));
+
+        cpu("A", 97, 97, 97);
+        assertEquals("CHANGED", last("A").get("eventType"));
+        assertEquals("CRITICAL", last("A").get("severity"));
+        assertEquals(Severity.CRITICAL, store.openAlertSeverity("A", "cpu"));
     }
 
     @Test
-    void evaluateCpu_觸發後恢復寫RESOLVED() {
-        // 觸發
-        engine.evaluateCpu("Server-01", 91.0);
-        engine.evaluateCpu("Server-01", 91.0);
-        engine.evaluateCpu("Server-01", 91.0);
-        // 恢復（需連續 2 次）
-        engine.evaluateCpu("Server-01", 79.0);
-        engine.evaluateCpu("Server-01", 79.0);
-        // 共 2 次：1 TRIGGERED + 1 RESOLVED
-        verify(store, times(2)).saveAlertEvent(any());
+    void 記憶體與自訂指標() throws Exception {
+        threshold("A", "memory", null, 85.0);
+        store.upsertDeviceThreshold("A", new ThresholdConfig.Builder("free_ports")
+            .direction(ThresholdConfig.Direction.LOW).critical(5.0).rearmMargin(3).triggerCount(2).rearmCount(2).build());
+        for (int i = 0; i < 3; i++) engine.evaluateMemory("A", 90);
+        engine.evaluate("A", "free_ports", 2);
+        engine.evaluate("A", "free_ports", 2);
+
+        assertEquals(Severity.CRITICAL, store.openAlertSeverity("A", "memory"));
+        assertEquals(Severity.CRITICAL, store.openAlertSeverity("A", "free_ports"));
+    }
+
+    // ─── 磁碟 ─────────────────────────────────────────────────────
+
+    private static List<DiskInfo> disks(double rootPct, double dataPct) {
+        return List.of(new DiskInfo("/", 100, (long) rootPct), new DiskInfo("/data", 100, (long) dataPct));
     }
 
     @Test
-    void evaluateCpu_不同設備互相獨立() {
-        // Server-A 觸發
-        engine.evaluateCpu("Server-A", 91.0);
-        engine.evaluateCpu("Server-A", 91.0);
-        engine.evaluateCpu("Server-A", 91.0);
-
-        // Server-B 正常
-        engine.evaluateCpu("Server-B", 70.0);
-        engine.evaluateCpu("Server-B", 70.0);
-
-        verify(store, times(1)).saveAlertEvent(any());
-    }
-
-    // ─── Memory ───────────────────────────────────────────────────
-
-    @Test
-    void evaluateMemory_連續三次超過寫DB() {
-        engine.evaluateMemory("Server-01", 86.0);
-        engine.evaluateMemory("Server-01", 87.0);
-        engine.evaluateMemory("Server-01", 88.0);
-        verify(store, times(1)).saveAlertEvent(any());
+    void 磁碟_套用設備預設_各掛載點各自告警() throws Exception {
+        threshold("A", "disk", null, 80.0);
+        for (int i = 0; i < 3; i++) engine.evaluateDisks("A", disks(85, 85));
+        assertEquals(Severity.CRITICAL, store.openAlertSeverity("A", "disk:/"));
+        assertEquals(Severity.CRITICAL, store.openAlertSeverity("A", "disk:/data"));
     }
 
     @Test
-    void evaluateMemory_CPU和Memory狀態互相獨立() {
-        // CPU 觸發
-        engine.evaluateCpu("Server-01", 91.0);
-        engine.evaluateCpu("Server-01", 91.0);
-        engine.evaluateCpu("Server-01", 91.0);
-        // Memory 未達到 3 次
-        engine.evaluateMemory("Server-01", 86.0);
-        engine.evaluateMemory("Server-01", 86.0);
-
-        verify(store, times(1)).saveAlertEvent(any()); // 只有 CPU 觸發
-    }
-
-    // ─── Disk ─────────────────────────────────────────────────────
-
-    @Test
-    void evaluateDisks_未超過不寫DB() {
-        List<DiskInfo> disks = List.of(
-            new DiskInfo("/", 1000L, 700L)  // 70%
-        );
-        engine.evaluateDisks("Server-01", disks);
-        engine.evaluateDisks("Server-01", disks);
-        verify(store, never()).saveAlertEvent(any());
+    void 磁碟_掛載點覆寫() throws Exception {
+        threshold("A", "disk", null, 80.0);
+        threshold("A", "disk:/data", null, 95.0);
+        for (int i = 0; i < 3; i++) engine.evaluateDisks("A", disks(50, 90));
+        assertNull(store.openAlertSeverity("A", "disk:/data"));
     }
 
     @Test
-    void evaluateDisks_磁碟超過閾值連續兩次觸發() {
-        // Disk triggerCount=2
-        List<DiskInfo> disks = List.of(
-            new DiskInfo("/", 1000L, 850L)  // 85%
-        );
-        engine.evaluateDisks("Server-01", disks);
-        engine.evaluateDisks("Server-01", disks);
-        verify(store, times(1)).saveAlertEvent(any());
+    void 磁碟_只有覆寫沒有預設() throws Exception {
+        threshold("A", "disk:/data", null, 95.0);
+        for (int i = 0; i < 3; i++) engine.evaluateDisks("A", disks(99, 10));
+        assertNull(store.openAlertSeverity("A", "disk:/"));
+    }
+
+    // ─── 閾值移除與變更 ───────────────────────────────────────────
+
+    @Test
+    void 刪除有未解除告警的閾值_下一次評估記錄解除_之後不再告警() throws Exception {
+        threshold("A", "cpu", null, 80.0);
+        cpu("A", 90, 90, 90);
+        long id = (Long) store.queryDeviceThresholds("A").get(0).get("id");
+        store.deleteDeviceThreshold(id);
+
+        cpu("A", 99);
+        assertEquals("RESOLVED", last("A").get("eventType"));
+        assertEquals("閾值已移除", last("A").get("message"));
+        cpu("A", 99, 99, 99, 99);
+        assertEquals(2, events("A").size());
     }
 
     @Test
-    void evaluateDisks_多個掛載點各自追蹤() {
-        // root 超過，home 正常
-        List<DiskInfo> disks = List.of(
-            new DiskInfo("/",     1000L, 850L),  // 85% 超過
-            new DiskInfo("/home", 1000L, 700L)   // 70% 正常
-        );
-        engine.evaluateDisks("Server-01", disks);
-        engine.evaluateDisks("Server-01", disks); // disk triggerCount=2
-
-        verify(store, times(1)).saveAlertEvent(any()); // 只有 / 觸發
+    void 閾值修改後下一次評估立即生效() throws Exception {
+        threshold("A", "cpu", null, 85.0);
+        cpu("A", 90, 90);
+        threshold("A", "cpu", null, 80.0);
+        cpu("A", 90);
+        assertEquals("TRIGGERED", last("A").get("eventType"), "計數保留，第 3 次依新門檻觸發");
+        assertEquals(80.0, (Double) last("A").get("thresholdVal"), 1e-9);
     }
 
-    // ─── 自訂指標 ─────────────────────────────────────────────────
+    // ─── 重啟還原 ─────────────────────────────────────────────────
 
     @Test
-    void evaluate_自訂HIGH方向連續達標才觸發() {
-        when(store.loadThresholdConfig("temperature")).thenReturn(new ThresholdConfig.Builder("temperature")
-            .threshold(70).rearmValue(65).triggerCount(3).rearmCount(2).build());
+    void 重啟後持續超標不重複觸發() throws Exception {
+        threshold("A", "cpu", null, 80.0);
+        cpu("A", 90, 90, 90);
 
-        engine.evaluate("SW-01", "temperature", 75);
-        engine.evaluate("SW-01", "temperature", 75);
-        verify(store, never()).saveAlertEvent(any());
-        engine.evaluate("SW-01", "temperature", 75);
-
-        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
-        verify(store).saveAlertEvent(captor.capture());
-        assertEquals(AlertEvent.Type.TRIGGERED, captor.getValue().getType());
-        assertEquals("temperature", captor.getValue().getMetricName());
+        ThresholdEngine restarted = new ThresholdEngine(store);
+        for (int i = 0; i < 5; i++) restarted.evaluateCpu("A", 90);
+        assertEquals(1, events("A").size());
     }
 
     @Test
-    void evaluate_自訂LOW方向低於門檻觸發_高於恢復值解除() {
-        when(store.loadThresholdConfig("free_ports")).thenReturn(new ThresholdConfig.Builder("free_ports")
-            .direction(ThresholdConfig.Direction.LOW).threshold(5).rearmValue(8).triggerCount(2).rearmCount(2).build());
+    void 重啟後恢復會解除() throws Exception {
+        threshold("A", "cpu", 70.0, 80.0);
+        cpu("A", 90, 90, 90);
 
-        engine.evaluate("SW-01", "free_ports", 2);
-        engine.evaluate("SW-01", "free_ports", 2);   // 觸發
-        engine.evaluate("SW-01", "free_ports", 6);   // 已高於觸發值但未達恢復值，不解除
-        engine.evaluate("SW-01", "free_ports", 6);
-        verify(store, times(1)).saveAlertEvent(any());
-        engine.evaluate("SW-01", "free_ports", 9);
-        engine.evaluate("SW-01", "free_ports", 9);   // 解除
-
-        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
-        verify(store, times(2)).saveAlertEvent(captor.capture());
-        assertEquals(AlertEvent.Type.TRIGGERED, captor.getAllValues().get(0).getType());
-        assertEquals(AlertEvent.Type.RESOLVED,  captor.getAllValues().get(1).getType());
+        ThresholdEngine restarted = new ThresholdEngine(store);
+        restarted.evaluateCpu("A", 10);
+        restarted.evaluateCpu("A", 10);
+        assertEquals("RESOLVED", last("A").get("eventType"));
+        assertEquals("CRITICAL", last("A").get("severity"));
     }
 
     @Test
-    void evaluate_沒有閾值只略過不告警() {
-        when(store.loadThresholdConfig("uptime_days")).thenReturn(null);
-        for (int i = 0; i < 5; i++) engine.evaluate("SW-01", "uptime_days", 999);
-        verify(store, never()).saveAlertEvent(any());
+    void 告警在別處被解除後重新同步_可再次觸發() throws Exception {
+        threshold("A", "cpu", null, 80.0);
+        cpu("A", 90, 90, 90);
+        store.resolveOpenAlerts("A", m -> true, "設備已刪除");
+
+        cpu("A", 90, 90, 90);
+        assertEquals("TRIGGERED", last("A").get("eventType"));
+        assertEquals(3, events("A").size());
+    }
+
+    // ─── 連線中斷告警 ─────────────────────────────────────────────
+
+    private static DeviceConfig device(String severity, int count) {
+        return new DeviceConfig.Builder("A", "10.0.0.1").unreachableSeverity(severity).unreachableCount(count).build();
     }
 
     @Test
-    void 閾值修改後下次評估立即生效() {
-        engine.evaluateCpu("Server-01", 85.0);
-        engine.evaluateCpu("Server-01", 85.0);   // 原本 90% 不超標
-        when(store.loadThresholdConfig("cpu")).thenReturn(new ThresholdConfig.Builder("cpu")
-            .threshold(80).rearmValue(70).triggerCount(1).rearmCount(1).build());
-        engine.evaluateCpu("Server-01", 85.0);
-        verify(store, times(1)).saveAlertEvent(any());
+    void 連線中斷_預設關閉不告警() {
+        for (int i = 0; i < 3; i++) engine.evaluateReachability(device("", 1), DeviceStatus.SNMP_ERROR);
+        assertTrue(events("A").isEmpty());
+    }
+
+    @Test
+    void 連線中斷_連續達到次數後告警_恢復後解除() {
+        DeviceConfig d = device("CRITICAL", 2);
+        engine.evaluateReachability(d, DeviceStatus.SNMP_ERROR);
+        assertTrue(events("A").isEmpty());
+        engine.evaluateReachability(d, DeviceStatus.SNMP_ERROR);
+        Map<String, Object> e = last("A");
+        assertEquals("device_unreachable", e.get("metricName"));
+        assertEquals("CRITICAL", e.get("severity"));
+        assertEquals("SNMP 無回應", e.get("message"));
+
+        engine.evaluateReachability(d, DeviceStatus.ONLINE);
+        assertEquals("RESOLVED", last("A").get("eventType"));
+        assertEquals("連線恢復", last("A").get("message"));
+    }
+
+    @Test
+    void 連線中斷_Ping失敗訊息與WARNING等級() {
+        engine.evaluateReachability(device("WARNING", 1), DeviceStatus.OFFLINE);
+        assertEquals("WARNING", last("A").get("severity"));
+        assertTrue(((String) last("A").get("message")).contains("Ping"));
+    }
+
+    @Test
+    void 連線中斷_關閉設定後解除() {
+        engine.evaluateReachability(device("CRITICAL", 1), DeviceStatus.SNMP_ERROR);
+        engine.evaluateReachability(device("", 1), DeviceStatus.SNMP_ERROR);
+        assertEquals("RESOLVED", last("A").get("eventType"));
+        assertNull(store.openAlertSeverity("A", "device_unreachable"));
+    }
+
+    @Test
+    void 連線中斷_等級由WARNING改為CRITICAL時升級() {
+        engine.evaluateReachability(device("WARNING", 1), DeviceStatus.SNMP_ERROR);
+        engine.evaluateReachability(device("CRITICAL", 1), DeviceStatus.SNMP_ERROR);
+        assertEquals("CHANGED", last("A").get("eventType"));
+        assertEquals("CRITICAL", last("A").get("severity"));
     }
 }

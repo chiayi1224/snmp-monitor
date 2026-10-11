@@ -4,6 +4,7 @@ import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.config.TrapOidMapping.Mapping;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import io.github.chiayi1224.simplesnmp.threshold.AlertEvent;
+import io.github.chiayi1224.simplesnmp.threshold.Severity;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -76,14 +77,35 @@ class TrapReceiverHandleTest {
     }
 
     @Test
-    void resolved_有開放告警時寫入恢復事件() {
-        when(store.hasOpenAlert("Router-01", "cpu")).thenReturn(true);
+    void resolved_有開放告警時寫入恢復事件_等級沿用解除前() {
+        when(store.openAlertSeverity("Router-01", "cpu")).thenReturn(Severity.WARNING);
 
         receiver.handleTrap("10.0.0.1", bindings(CPU_NORMAL));
 
         ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
         verify(store).saveAlertEvent(captor.capture());
         assertEquals(AlertEvent.Type.RESOLVED, captor.getValue().getType());
+        assertEquals(Severity.WARNING, captor.getValue().getSeverity());
+    }
+
+    @Test
+    void triggered_使用對應的等級() {
+        receiver.reloadMappings(List.of(new Mapping(CPU_HIGH, CPU_NORMAL, "cpu", "CPU 過高", Severity.WARNING)));
+
+        receiver.handleTrap("10.0.0.1", bindings(CPU_HIGH));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(store).saveAlertEvent(captor.capture());
+        assertEquals(Severity.WARNING, captor.getValue().getSeverity());
+    }
+
+    @Test
+    void triggered_未指定等級的對應為CRITICAL() {
+        receiver.handleTrap("10.0.0.1", bindings(CPU_HIGH));
+
+        ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(store).saveAlertEvent(captor.capture());
+        assertEquals(Severity.CRITICAL, captor.getValue().getSeverity());
     }
 
     @Test

@@ -60,11 +60,17 @@ JettyServer (8080) ◄───────────────────�
    - 每台設備可設定磁碟過濾 `disk_filter`（`config.DiskFilter`：逗號分隔的掛載點完整名稱、`*` 萬用字元、不分大小寫，空白代表全部）。過濾在 `ProfileCollector.calculate` 套用於 `disk` 指標，Poller 與範本預覽一致；不符合的磁碟不寫入也不評估閾值，全部不符合時該指標視為失敗。設備對話框的「探測磁碟」呼叫 `POST /api/admin/devices[/{name}]` 帶 `"action":"probe-disks"`（`ProfileCollector.probeDisks`，只列 hrStorage 固定磁碟；既有設備未帶 community／v3 密碼時沿用已儲存的值）。
    - 所有對設備的查詢都透過 `snmp.SnmpSession`（`get()`、`walk()`）：使用自己的 `USM`／`SecurityProtocols`，v3 使用者依設備 engine ID 本地化後加入 USM（同名使用者不同密碼不會互相覆蓋），只發出 GET／GETNEXT／GETBULK。v1 的 GET 遇到 `noSuchName` 會移除該 OID 後重送。
    - 測試可用 `src/test/.../snmp/TestSnmpAgent`（記憶體內的 v1/v2c/v3 agent）做端對端驗證，不需要外部設備。
-3. `ThresholdEngine` 使用狀態機（`ThresholdState`）與 hysteresis 防止告警抖動：CPU/記憶體需連續 3 次超標才觸發，磁碟需 2 次；恢復需連續 2 次低於 rearm 值。
-   - 每次評估都重新讀取 `threshold_settings`，修改後下次 poll 即生效；狀態以「設備＋指標名稱」為鍵。
-   - 自訂指標以 `evaluate(device, metricKey, value)` 評估，可設定方向 `HIGH`（超過才告警）或 `LOW`（低於才告警）；沒有閾值的自訂指標只儲存、不告警。`cpu`／`memory`／`disk` 閾值不可刪除。
+3. `ThresholdEngine` 以每台設備的閾值（`device_thresholds`，`ThresholdRepository`）評估，沒有預設閾值：查無設定即只儲存、不告警。
+   - 告警等級 `Severity`（WARNING／CRITICAL）。`ThresholdConfig` 有 `warning`／`critical`（至少一個）與共用的恢復寬度 `rearmMargin`；cpu／memory／disk 方向固定 HIGH、值 0～100。
+   - `ThresholdState` 是多等級狀態機（純邏輯、閾值於每次評估時傳入）：連續 `triggerCount` 次超過才觸發或升級（取期間每次都達到的最低等級），連續 `rearmCount` 次恢復才降級或解除；事件為 `TRIGGERED`／`CHANGED`／`RESOLVED`，都帶等級。設定移除目前等級時直接重新定位。
+   - 磁碟以 `disk:<掛載點>` 評估：有該掛載點閾值時使用，否則使用設備的 `disk`。
+   - 第一次評估某「設備＋指標」時以 `openAlertSeverity`（最後一筆事件）還原等級，重啟後不重複觸發；記憶體中有等級時每次再與資料庫比對，告警在別處被解除（刪除設備、磁碟過濾變更）時重新同步。閾值被移除時記錄解除。
+   - 連線中斷告警：`SnmpPoller` 每次更新狀態後呼叫 `evaluateReachability`，以保留指標名 `device_unreachable`（`ProfileMetric.DEVICE_UNREACHABLE`，不可作為自訂指標或閾值名稱）走同一套狀態機；設定在 `devices.unreachable_severity`／`unreachable_count`，預設關閉。
+   - 「未解除」判定一律是每組設備＋指標最後一筆（`MAX(id)`）不是 RESOLVED；保存期限清理保留最後一筆。
+   - 舊版全域閾值 `threshold_settings` 由 `ThresholdMigration` 一次性轉成每台既有設備的 Critical 閾值，資料表保留不刪。
 4. `TrapReceiver` 依來源 IP 查找設備名稱（啟動時建立 IP→name 對應表），trap OID 透過 `TrapOidMapping` 轉換為告警類型。
    - 同一個 port 同時接收 v1 / v2c / v3 與 INFORM；v1 依 RFC 3584 轉成 v2 格式，INFORM 會回覆 RESPONSE。
+   - 每筆 Trap 對應有等級（`trap_oid_mappings.severity`，預設 CRITICAL）；Trap 不經過 `ThresholdEngine`，解除事件沿用解除前的等級。
    - v1 / v2c 的 community 依設定 `trap_communities` 過濾（逗號分隔，`*` 代表全部接受）；v3 使用者由 `reloadV3Users()` 即時增刪。
    - 使用自己的 `USM` / `SecurityProtocols` 實例，不依賴 SNMP4J 的全域 singleton（全域實例預設沒有載入任何加密協定）。
    - `TrapReceiverEndToEndTest` 會在本機實際送出各版本 Trap 驗證，修改接收邏輯後請執行。
@@ -104,7 +110,7 @@ JettyServer (8080) ◄───────────────────�
 ### 設定常數
 
 - SNMP OID 對應：`OidConstants.java`
-- 閾值預設值（CPU 90%、記憶體 85%、磁碟 80%）：`ThresholdConfig.java`
+- 閾值：沒有預設值，每台設備於網頁或 `/api/admin/device-thresholds` 設定（`threshold/ThresholdConfig.java`）
 - 內建監控範本：`profile/BuiltinProfiles.java`；指標計算類型：`profile/MetricKind.java`
 - Trap OID → 告警類型對應：`TrapOidMapping.java`
 

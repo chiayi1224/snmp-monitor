@@ -8,6 +8,7 @@ import io.github.chiayi1224.simplesnmp.profile.BuiltinProfiles;
 import io.github.chiayi1224.simplesnmp.profile.MetricProfile;
 import io.github.chiayi1224.simplesnmp.profile.ProfileResolver;
 import io.github.chiayi1224.simplesnmp.threshold.AlertEvent;
+import io.github.chiayi1224.simplesnmp.threshold.Severity;
 import io.github.chiayi1224.simplesnmp.threshold.ThresholdConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +22,7 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 /**
  * SQLite 儲存（對外統一入口）
@@ -33,7 +35,8 @@ import java.util.Map;
  *   trap_oid_mappings / unknown_traps / unknown_sources — {@link TrapRepository}
  *   poll_oids           — 已停用（僅保留資料以利回滾；升級時由 {@link PollOidMigration} 轉換為範本）
  *   app_settings        — {@link SettingsRepository}  系統設定（key-value）
- *   threshold_settings  — {@link ThresholdRepository} 告警閾值設定
+ *   device_thresholds   — {@link ThresholdRepository} 每台設備的告警閾值
+ *   threshold_settings  — 已停用（僅保留資料以利回滾；升級時由 {@link ThresholdMigration} 轉換為每台設備的閾值）
  *   snmp_v3_users       — {@link V3UserRepository}    SNMPv3 Trap 使用者
  *   api_tokens          — {@link ApiTokenRepository}  API Token
  *   audit_logs          — {@link AuditLogRepository}  稽核日誌
@@ -90,12 +93,12 @@ public class MetricStore implements AutoCloseable {
         users.seedDefaults();
         traps.seedDefaults();
         settings.seedDefaults();
-        thresholds.seedDefaults();
         v3Users.seedDefaults();
         discovery.failInterruptedScans();
         profiles.syncBuiltin(BuiltinProfiles.all());
         new PollOidMigration(db, profiles, settings).runOnce();
-        log.info("MetricStore 開啟: {}", dbPath);
+        new ThresholdMigration(db, settings).runOnce();
+        log.info("MetricStore opened: {}", dbPath);
     }
 
     /** 寫入被鎖住時最多等待的毫秒數（例如外部工具正在寫入），超過才回報 SQLITE_BUSY */
@@ -115,7 +118,7 @@ public class MetricStore implements AutoCloseable {
             if (!fileDb) return;
             try (java.sql.ResultSet rs = st.executeQuery("PRAGMA journal_mode=WAL")) {
                 String mode = rs.next() ? rs.getString(1) : "?";
-                if (!"wal".equalsIgnoreCase(mode)) log.warn("無法啟用 WAL 模式，目前為 {}", mode);
+                if (!"wal".equalsIgnoreCase(mode)) log.warn("Unable to enable WAL mode, current mode is {}", mode);
             }
             st.execute("PRAGMA synchronous=NORMAL");
         }
@@ -221,8 +224,10 @@ public class MetricStore implements AutoCloseable {
         devices.update(id, name, host, port, community, enabled, retries, timeoutMs);
     }
 
+    /** 依編號刪除設備；同 {@link #deleteDeviceByName(String)} 一併刪除閾值並解除告警 */
     public void deleteDevice(long id) throws SQLException {
-        devices.delete(id);
+        String name = devices.nameOf(id);
+        if (name != null) deleteDeviceByName(name);
     }
 
     /** 依名稱查詢單台設備 */
@@ -238,9 +243,11 @@ public class MetricStore implements AutoCloseable {
         devices.updateByName(name, host, port, community, enabled, retries, timeoutMs);
     }
 
-    /** 依名稱刪除設備 */
+    /** 依名稱刪除設備，一併刪除其閾值並解除其未解除告警（告警歷史保留） */
     public void deleteDeviceByName(String name) throws SQLException {
         devices.deleteByName(name);
+        thresholds.deleteByDevice(name);
+        alerts.resolveOpen(name, metric -> true, "設備已刪除");
     }
 
     /** 更新設備連線狀態（ONLINE / OFFLINE / UNKNOWN） */
@@ -274,6 +281,16 @@ public class MetricStore implements AutoCloseable {
         return alerts.hasOpen(deviceName, metricName);
     }
 
+    /** 設備指標目前未解除告警的等級；沒有未解除告警回傳 null */
+    public Severity openAlertSeverity(String deviceName, String metricName) {
+        return alerts.openSeverity(deviceName, metricName);
+    }
+
+    /** 為設備中指標名稱符合條件的未解除告警記錄解除事件，回傳解除筆數 */
+    public int resolveOpenAlerts(String deviceName, Predicate<String> metricFilter, String message) throws SQLException {
+        return alerts.resolveOpen(deviceName, metricFilter, message);
+    }
+
     public List<String> queryDeviceNames() {
         return metrics.queryDeviceNames();
     }
@@ -283,7 +300,12 @@ public class MetricStore implements AutoCloseable {
     }
 
     public List<Map<String, Object>> queryAlerts(String deviceName, int limit) {
-        return alerts.query(deviceName, limit);
+        return alerts.query(deviceName, null, false, limit);
+    }
+
+    /** 查詢告警記錄；deviceName、severity 為 null 代表不篩選，activeOnly 只回傳未解除的告警 */
+    public List<Map<String, Object>> queryAlerts(String deviceName, Severity severity, boolean activeOnly, int limit) {
+        return alerts.query(deviceName, severity, activeOnly, limit);
     }
 
     // ─── Trap OID Mapping ─────────────────────────────────────────
@@ -298,14 +320,20 @@ public class MetricStore implements AutoCloseable {
         return traps.queryAllMappings();
     }
 
+    /** 新增 Trap 對應，等級為 CRITICAL */
     public void addTrapMapping(String metricName, String triggeredOid,
                                String resolvedOid, String description) throws SQLException {
-        traps.addMapping(metricName, triggeredOid, resolvedOid, description);
+        addTrapMapping(metricName, triggeredOid, resolvedOid, description, Severity.CRITICAL);
     }
 
-    public void updateTrapMapping(long id, String metricName, String triggeredOid,
-                                  String resolvedOid, String description, boolean enabled) throws SQLException {
-        traps.updateMapping(id, metricName, triggeredOid, resolvedOid, description, enabled);
+    public void addTrapMapping(String metricName, String triggeredOid,
+                               String resolvedOid, String description, Severity severity) throws SQLException {
+        traps.addMapping(metricName, triggeredOid, resolvedOid, description, severity);
+    }
+
+    public void updateTrapMapping(long id, String metricName, String triggeredOid, String resolvedOid,
+                                  String description, Severity severity, boolean enabled) throws SQLException {
+        traps.updateMapping(id, metricName, triggeredOid, resolvedOid, description, severity, enabled);
     }
 
     public void deleteTrapMapping(long id) throws SQLException {
@@ -376,44 +404,43 @@ public class MetricStore implements AutoCloseable {
         settings.upsert(key, value, description);
     }
 
-    // ─── threshold_settings ───────────────────────────────────────
+    // ─── device_thresholds ────────────────────────────────────────
 
-    public ThresholdConfig loadThresholdConfig(String metricName) {
-        return thresholds.load(metricName);
+    /** 設備指定指標的閾值（disk:&lt;掛載點&gt; 沒有覆寫時使用 disk）；沒有設定回傳 null */
+    public ThresholdConfig loadThreshold(String deviceName, String metricName) {
+        return thresholds.load(deviceName, metricName);
     }
 
-    public List<Map<String, Object>> queryAllThresholds() {
-        return thresholds.queryAll();
+    public List<Map<String, Object>> queryDeviceThresholds(String deviceName) {
+        return thresholds.queryByDevice(deviceName);
     }
 
-    /** 更新閾值，方向設為 HIGH（內建三項的方向固定為 HIGH） */
-    public void updateThreshold(long id, double threshold, double rearm,
-                                int triggerCount, int rearmCount) throws SQLException {
-        updateThreshold(id, ThresholdConfig.Direction.HIGH, threshold, rearm, triggerCount, rearmCount);
+    /** 指定編號的閾值；不存在回傳 null */
+    public Map<String, Object> queryDeviceThreshold(long id) throws SQLException {
+        return thresholds.queryById(id);
     }
 
-    public void updateThreshold(long id, ThresholdConfig.Direction direction, double threshold, double rearm,
-                                int triggerCount, int rearmCount) throws SQLException {
-        thresholds.update(id, direction, threshold, rearm, triggerCount, rearmCount);
+    /** 每台設備的閾值筆數 */
+    public Map<String, Long> countDeviceThresholds() {
+        return thresholds.countByDevice();
     }
 
-    /** 指定編號閾值的指標名稱；不存在回傳 null */
-    public String thresholdMetricName(long id) throws SQLException {
-        return thresholds.metricNameOf(id);
+    /** 新增或取代設備的指標閾值，回傳編號 */
+    public long upsertDeviceThreshold(String deviceName, ThresholdConfig config) throws SQLException {
+        return thresholds.upsert(deviceName, config);
     }
 
-    public boolean thresholdExists(String metricName) throws SQLException {
-        return thresholds.exists(metricName);
-    }
-
-    /** 新增自訂指標閾值，回傳編號 */
-    public long createThreshold(String metricName, ThresholdConfig.Direction direction, double threshold,
-                                double rearm, int triggerCount, int rearmCount, String description) throws SQLException {
-        return thresholds.create(metricName, direction, threshold, rearm, triggerCount, rearmCount, description);
-    }
-
-    public void deleteThreshold(long id) throws SQLException {
+    public void deleteDeviceThreshold(long id) throws SQLException {
         thresholds.delete(id);
+    }
+
+    /**
+     * 把來源設備的閾值與連線中斷告警設定複製到目標設備（同名指標取代、其他保留）。
+     * 呼叫端須先確認所有目標設備存在。
+     */
+    public void copyDeviceThresholds(String fromDevice, List<String> toDevices) throws SQLException {
+        thresholds.copy(fromDevice, toDevices);
+        devices.copyUnreachableSettings(fromDevice, toDevices);
     }
 
     // ─── snmp_v3_users ────────────────────────────────────────────

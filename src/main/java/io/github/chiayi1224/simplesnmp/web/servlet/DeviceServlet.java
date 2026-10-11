@@ -1,6 +1,7 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
+import io.github.chiayi1224.simplesnmp.config.DiskFilter;
 import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
 import io.github.chiayi1224.simplesnmp.profile.MetricException;
 import io.github.chiayi1224.simplesnmp.profile.MetricValue;
@@ -46,6 +47,8 @@ import java.util.Map;
  *   "v3PrivPassword": "********",    ← 需先有認證密碼；更新時傳 "" 代表清除
  *   "profileId":      3              ← 監控範本；null 代表依 sysObjectID 自動套用，更新時省略代表不變
  *   "diskFilter":     "/,/data,/mnt/*" ← 只記錄符合的磁碟掛載點（逗號分隔、可用 *）；"" 代表全部，更新時省略代表不變
+ *   "unreachableSeverity": "CRITICAL",   ← 連線中斷告警：""（關閉）/ WARNING / CRITICAL，更新時省略代表不變
+ *   "unreachableCount":    2             ← 連續幾次無法連線才告警（至少 1），更新時省略代表不變
  * }
  *
  * 回應不包含 community 與 v3 密碼，只有 communityConfigured / v3AuthConfigured / v3PrivConfigured。
@@ -158,6 +161,7 @@ public class DeviceServlet extends BaseJsonServlet {
 
                     boolean enabled = optBool(body, "enabled", true);
                     store.updateDeviceByName(device, enabled);
+                    if (existing != null) resolveExcludedDisks(name, existing.getDiskFilter(), device.getDiskFilter());
                     trapReceiver.reloadDevices(store.loadEnabledDevices());
                     writeJson(resp, Map.of("message", "更新成功", "name", name));
                 }
@@ -165,6 +169,15 @@ public class DeviceServlet extends BaseJsonServlet {
         } catch (Exception e) {
             writeError(resp, 500, e.getMessage());
         }
+    }
+
+    /** 磁碟過濾改變時，不再符合條件的掛載點不會再被評估，其未解除告警在此解除 */
+    private void resolveExcludedDisks(String name, String oldFilter, String newFilter) throws Exception {
+        if (oldFilter.equals(newFilter)) return;
+        DiskFilter filter = DiskFilter.parse(newFilter);
+        store.resolveOpenAlerts(name,
+            metric -> metric.startsWith("disk:") && !filter.matches(metric.substring("disk:".length())),
+            "磁碟已不在監控範圍");
     }
 
     /** 以對話框目前填的連線資料探測磁碟；已存在的設備可沿用已儲存的 community 與 v3 密碼 */
@@ -264,6 +277,13 @@ public class DeviceServlet extends BaseJsonServlet {
         String diskFilter = rawText(body, "diskFilter");
         b.diskFilter(diskFilter != null ? diskFilter : existing != null ? existing.getDiskFilter() : "");
 
+        // 連線中斷告警：欄位存在就採用，省略時沿用舊值
+        String unreachable = rawText(body, "unreachableSeverity");
+        b.unreachableSeverity(unreachable != null ? unreachable : existing != null ? existing.getUnreachableSeverity() : "");
+        b.unreachableCount(body.path("unreachableCount").isMissingNode() || body.path("unreachableCount").isNull()
+            ? (existing != null ? existing.getUnreachableCount() : 1)
+            : body.path("unreachableCount").asInt(0));
+
         String authPass = rawText(body, "v3AuthPassword");
         String privPass = rawText(body, "v3PrivPassword");
         b.v3AuthPassword(authPass != null || existing != null ? authPass : "");
@@ -291,6 +311,7 @@ public class DeviceServlet extends BaseJsonServlet {
             .v3AuthProtocol(d.getV3AuthProtocol()).v3AuthPassword(auth)
             .v3PrivProtocol(d.getV3PrivProtocol()).v3PrivPassword(priv)
             .diskFilter(d.getDiskFilter())
+            .unreachableSeverity(d.getUnreachableSeverity()).unreachableCount(d.getUnreachableCount())
             .build();
     }
 

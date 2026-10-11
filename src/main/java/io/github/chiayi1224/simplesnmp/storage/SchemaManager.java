@@ -185,6 +185,23 @@ final class SchemaManager {
         )
         """,
 
+        // 每台設備的告警閾值（warning / critical 可為 NULL，至少一個有值）
+        """
+        CREATE TABLE IF NOT EXISTS device_thresholds (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_name   TEXT    NOT NULL,
+            metric_name   TEXT    NOT NULL,
+            direction     TEXT    NOT NULL DEFAULT 'HIGH',
+            warning       REAL,
+            critical      REAL,
+            rearm_margin  REAL    NOT NULL DEFAULT 0,
+            trigger_count INTEGER NOT NULL,
+            rearm_count   INTEGER NOT NULL,
+            updated       TEXT    NOT NULL,
+            UNIQUE(device_name, metric_name)
+        )
+        """,
+
         // SNMPv3 Trap 使用者
         """
         CREATE TABLE IF NOT EXISTS snmp_v3_users (
@@ -313,6 +330,11 @@ final class SchemaManager {
         "ALTER TABLE devices ADD COLUMN sys_object_id TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE devices ADD COLUMN disk_filter TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE threshold_settings ADD COLUMN direction TEXT NOT NULL DEFAULT 'HIGH'",
+        // 告警等級：升級前的事件與 Trap 對應一律視為 CRITICAL
+        "ALTER TABLE alert_events ADD COLUMN severity TEXT NOT NULL DEFAULT 'CRITICAL'",
+        "ALTER TABLE trap_oid_mappings ADD COLUMN severity TEXT NOT NULL DEFAULT 'CRITICAL'",
+        "ALTER TABLE devices ADD COLUMN unreachable_severity TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE devices ADD COLUMN unreachable_count INTEGER NOT NULL DEFAULT 1",
     };
 
     private final Db db;
@@ -329,7 +351,7 @@ final class SchemaManager {
 
     void migrateSchema() {
         for (String sql : MIGRATIONS) {
-            if (db.executeQuietly(sql)) log.info("schema 遷移：{}", sql);
+            if (db.executeQuietly(sql)) log.info("Schema migration applied: {}", sql);
         }
     }
 }

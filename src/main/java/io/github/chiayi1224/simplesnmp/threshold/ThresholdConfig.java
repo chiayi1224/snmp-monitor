@@ -1,14 +1,16 @@
 package io.github.chiayi1224.simplesnmp.threshold;
 
 /**
- * 單一指標的閾值設定
- * 對應 OpenNMS 的 threshold 定義
+ * 單一設備單一指標的閾值設定：Warning／Critical 兩段觸發值（至少一個）與共用的恢復寬度。
+ *
+ *   方向 HIGH：數值 &gt; 觸發值即超過；數值 &lt;= 觸發值 − 恢復寬度才算自該等級恢復
+ *   方向 LOW ：數值 &lt; 觸發值即超過；數值 &gt;= 觸發值 + 恢復寬度才算自該等級恢復
  */
 public class ThresholdConfig {
 
     public enum Direction {
-        HIGH,  // 值超過 threshold 才告警（CPU、Memory、Disk）
-        LOW;   // 值低於 threshold 才告警（例如剩餘空間、可用埠數）
+        HIGH,  // 值超過觸發值才告警（CPU、記憶體、磁碟）
+        LOW;   // 值低於觸發值才告警（例如剩餘空間、可用埠數）
 
         /** 大小寫不敏感解析；null 或空白回傳 HIGH，不合法回傳 null */
         public static Direction parse(String s) {
@@ -18,78 +20,93 @@ public class ThresholdConfig {
         }
     }
 
-    private final String   metricName;    // 識別用，例如 "cpu", "memory", "disk:/"
+    private static final String DISK_PREFIX = "disk:";
+
+    private final String    metricName;    // 例如 "cpu"、"disk:/"、自訂指標
     private final Direction direction;
-    private final double   threshold;     // 觸發值
-    private final double   rearmValue;    // 恢復值（HIGH 模式下應低於 threshold）
-    private final int      triggerCount;  // 連續幾次超過才 TRIGGERED
-    private final int      rearmCount;    // 連續幾次恢復才 RESOLVED
+    private final Double    warning;       // null 代表不設定 Warning
+    private final Double    critical;      // null 代表不設定 Critical
+    private final double    rearmMargin;   // 恢復寬度
+    private final int       triggerCount;  // 連續幾次超過才觸發或升級
+    private final int       rearmCount;    // 連續幾次恢復才降級或解除
 
     private ThresholdConfig(Builder b) {
         this.metricName   = b.metricName;
         this.direction    = b.direction;
-        this.threshold    = b.threshold;
-        this.rearmValue   = b.rearmValue;
+        this.warning      = b.warning;
+        this.critical     = b.critical;
+        this.rearmMargin  = b.rearmMargin;
         this.triggerCount = b.triggerCount;
         this.rearmCount   = b.rearmCount;
     }
 
     public String    getMetricName()   { return metricName; }
     public Direction getDirection()    { return direction; }
-    public double    getThreshold()    { return threshold; }
-    public double    getRearmValue()   { return rearmValue; }
+    public Double    getWarning()      { return warning; }
+    public Double    getCritical()     { return critical; }
+    public double    getRearmMargin()  { return rearmMargin; }
     public int       getTriggerCount() { return triggerCount; }
     public int       getRearmCount()   { return rearmCount; }
 
-    /** 判斷某個值是否「超過閾值」 */
-    public boolean isExceeded(double value) {
-        return direction == Direction.HIGH
-            ? value > threshold
-            : value < threshold;
+    /** 指定等級的觸發值；未設定回傳 null */
+    public Double thresholdFor(Severity level) {
+        return level == Severity.CRITICAL ? critical : level == Severity.WARNING ? warning : null;
     }
 
-    /** 判斷某個值是否「已恢復」 */
-    public boolean isRearmed(double value) {
-        return direction == Direction.HIGH
-            ? value <= rearmValue
-            : value >= rearmValue;
-    }
-
-    /** 合法回傳 null，否則回傳錯誤訊息（恢復值須在觸發值「安全的一側」） */
-    public static String validate(Direction direction, double threshold, double rearm,
-                                  int triggerCount, int rearmCount) {
-        if (direction == null) return "direction 只能是 HIGH 或 LOW";
-        if (!Double.isFinite(threshold) || !Double.isFinite(rearm)) return "threshold 與 rearm 必須是數字";
-        if (direction == Direction.HIGH && rearm >= threshold) return "方向為 HIGH 時 rearm 應小於 threshold";
-        if (direction == Direction.LOW && rearm <= threshold) return "方向為 LOW 時 rearm 應大於 threshold";
-        if (triggerCount < 1 || rearmCount < 1) return "count 至少為 1";
+    /** 數值目前達到的最高等級；都未超過回傳 null */
+    public Severity rawLevel(double value) {
+        if (critical != null && exceeds(value, critical)) return Severity.CRITICAL;
+        if (warning != null && exceeds(value, warning)) return Severity.WARNING;
         return null;
     }
 
-    // ─── 常用預設值 ───────────────────────────────────────────────
-
-    /** CPU 使用率超過 90%（連續 3 次），低於 80% 恢復 */
-    public static ThresholdConfig cpu() {
-        return new Builder("cpu")
-            .threshold(90.0).rearmValue(80.0)
-            .triggerCount(3).rearmCount(2)
-            .build();
+    /** 數值是否已自指定等級恢復（該等級未設定時視為已恢復） */
+    public boolean recoveredFrom(Severity level, double value) {
+        if (thresholdFor(level) == null) return true;
+        double r = recoveryValue(level);
+        return direction == Direction.HIGH ? value <= r : value >= r;
     }
 
-    /** 記憶體使用率超過 85%（連續 3 次），低於 75% 恢復 */
-    public static ThresholdConfig memory() {
-        return new Builder("memory")
-            .threshold(85.0).rearmValue(75.0)
-            .triggerCount(3).rearmCount(2)
-            .build();
+    /** 指定等級的恢復值（HIGH 為觸發值 − 寬度，LOW 為觸發值 + 寬度）；未設定回傳 0 */
+    public double recoveryValue(Severity level) {
+        Double t = thresholdFor(level);
+        if (t == null) return 0.0;
+        return direction == Direction.HIGH ? t - rearmMargin : t + rearmMargin;
     }
 
-    /** 磁碟使用率超過 80%（連續 2 次），低於 70% 恢復 */
-    public static ThresholdConfig disk(String mountPoint) {
-        return new Builder("disk:" + mountPoint)
-            .threshold(80.0).rearmValue(70.0)
-            .triggerCount(2).rearmCount(2)
-            .build();
+    private boolean exceeds(double value, double threshold) {
+        return direction == Direction.HIGH ? value > threshold : value < threshold;
+    }
+
+    /** cpu、memory、disk 與 disk:&lt;掛載點&gt; 為百分比指標：方向固定 HIGH、觸發值限 0～100 */
+    public static boolean isPercentMetric(String metricName) {
+        return "cpu".equals(metricName) || "memory".equals(metricName) || "disk".equals(metricName)
+            || (metricName != null && metricName.startsWith(DISK_PREFIX));
+    }
+
+    /** 合法回傳 null，否則回傳錯誤訊息（不檢查指標名稱本身是否合法） */
+    public static String validate(String metricName, Direction direction, Double warning, Double critical,
+                                  double rearmMargin, int triggerCount, int rearmCount) {
+        if (direction == null) return "direction 只能是 HIGH 或 LOW";
+        if (warning == null && critical == null) return "Warning 與 Critical 至少要設定一個";
+        if ((warning != null && !Double.isFinite(warning)) || (critical != null && !Double.isFinite(critical))) {
+            return "Warning 與 Critical 必須是數字";
+        }
+        if (isPercentMetric(metricName)) {
+            if (direction != Direction.HIGH) return "指標 " + metricName + " 的方向固定為 HIGH";
+            if (outOfPercent(warning) || outOfPercent(critical)) return "指標 " + metricName + " 的觸發值應在 0（不含）到 100 之間";
+        }
+        if (warning != null && critical != null) {
+            if (direction == Direction.HIGH && warning >= critical) return "方向為 HIGH 時 Warning 必須小於 Critical";
+            if (direction == Direction.LOW && warning <= critical) return "方向為 LOW 時 Warning 必須大於 Critical";
+        }
+        if (!Double.isFinite(rearmMargin) || rearmMargin < 0) return "恢復寬度不可小於 0";
+        if (triggerCount < 1 || rearmCount < 1) return "連續次數至少為 1";
+        return null;
+    }
+
+    private static boolean outOfPercent(Double v) {
+        return v != null && (v <= 0 || v > 100);
     }
 
     // ─── Builder ──────────────────────────────────────────────────
@@ -97,15 +114,17 @@ public class ThresholdConfig {
     public static class Builder {
         private final String metricName;
         private Direction direction    = Direction.HIGH;
-        private double    threshold    = 80.0;
-        private double    rearmValue   = 70.0;
-        private int       triggerCount = 3;
-        private int       rearmCount   = 2;
+        private Double    warning      = null;
+        private Double    critical     = null;
+        private double    rearmMargin  = 0.0;
+        private int       triggerCount = 1;
+        private int       rearmCount   = 1;
 
         public Builder(String metricName) { this.metricName = metricName; }
         public Builder direction(Direction d)  { this.direction    = d;  return this; }
-        public Builder threshold(double v)     { this.threshold    = v;  return this; }
-        public Builder rearmValue(double v)    { this.rearmValue   = v;  return this; }
+        public Builder warning(Double v)       { this.warning      = v;  return this; }
+        public Builder critical(Double v)      { this.critical     = v;  return this; }
+        public Builder rearmMargin(double v)   { this.rearmMargin  = v;  return this; }
         public Builder triggerCount(int v)     { this.triggerCount = v;  return this; }
         public Builder rearmCount(int v)       { this.rearmCount   = v;  return this; }
         public ThresholdConfig build()         { return new ThresholdConfig(this); }

@@ -1,6 +1,7 @@
 package io.github.chiayi1224.simplesnmp.storage;
 
 import io.github.chiayi1224.simplesnmp.config.TrapOidMapping;
+import io.github.chiayi1224.simplesnmp.threshold.Severity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,26 +32,27 @@ final class TrapRepository {
         try {
             if (db.queryLong("SELECT COUNT(*) FROM trap_oid_mappings") == 0) {
                 for (TrapOidMapping.Mapping m : TrapOidMapping.defaults()) {
-                    addMapping(m.metricName(), m.triggeredOid(), m.resolvedOid(), m.description());
+                    addMapping(m.metricName(), m.triggeredOid(), m.resolvedOid(), m.description(), m.severity());
                 }
-                log.info("已寫入預設 Trap OID 對應 {} 筆", TrapOidMapping.defaults().size());
+                log.info("Seeded {} default trap OID mappings", TrapOidMapping.defaults().size());
             }
         } catch (SQLException ex) {
-            log.error("seedDefaultTrapMappings 失敗: {}", ex.getMessage());
+            log.error("Failed to seed default trap mappings: {}", ex.getMessage());
         }
     }
 
     /** 載入所有啟用的 Trap OID 對應（供 TrapReceiver 使用） */
     List<TrapOidMapping.Mapping> loadMappings() {
-        String sql = "SELECT metric_name, triggered_oid, resolved_oid, description FROM trap_oid_mappings WHERE enabled=1";
+        String sql = "SELECT metric_name, triggered_oid, resolved_oid, description, severity FROM trap_oid_mappings WHERE enabled=1";
         try {
             return db.query(sql, rs -> new TrapOidMapping.Mapping(
                 rs.getString("triggered_oid"),
                 rs.getString("resolved_oid"),
                 rs.getString("metric_name"),
-                rs.getString("description")));
+                rs.getString("description"),
+                Severity.parse(rs.getString("severity"))));
         } catch (SQLException ex) {
-            log.error("loadTrapMappings 失敗: {}", ex.getMessage());
+            log.error("Failed to load trap mappings: {}", ex.getMessage());
             return new ArrayList<>();
         }
     }
@@ -65,29 +67,38 @@ final class TrapRepository {
                 row.put("triggeredOid", rs.getString("triggered_oid"));
                 row.put("resolvedOid",  rs.getString("resolved_oid"));
                 row.put("description",  rs.getString("description"));
+                row.put("severity",     severityOf(rs.getString("severity")).name());
                 row.put("enabled",      Db.bool(rs, "enabled"));
                 row.put("created",      rs.getString("created"));
                 row.put("updated",      rs.getString("updated"));
                 return row;
             });
         } catch (SQLException ex) {
-            log.error("queryAllTrapMappings 失敗: {}", ex.getMessage());
+            log.error("Failed to query trap mappings: {}", ex.getMessage());
             return new ArrayList<>();
         }
     }
 
     void addMapping(String metricName, String triggeredOid,
-                    String resolvedOid, String description) throws SQLException {
+                    String resolvedOid, String description, Severity severity) throws SQLException {
         String now = Db.now();
-        db.update("INSERT INTO trap_oid_mappings(metric_name, triggered_oid, resolved_oid, description, enabled, created, updated) VALUES(?,?,?,?,1,?,?)",
-            metricName, triggeredOid, blankToNull(resolvedOid), description, now, now);
-        log.info("新增 Trap OID 對應: {} triggered={}", metricName, triggeredOid);
+        db.update("INSERT INTO trap_oid_mappings(metric_name, triggered_oid, resolved_oid, description, severity, enabled, created, updated) VALUES(?,?,?,?,?,1,?,?)",
+            metricName, triggeredOid, blankToNull(resolvedOid), description, severityOf(severity).name(), now, now);
+        log.info("Added trap OID mapping: {} triggered={} severity={}", metricName, triggeredOid, severityOf(severity));
     }
 
     void updateMapping(long id, String metricName, String triggeredOid,
-                       String resolvedOid, String description, boolean enabled) throws SQLException {
-        db.update("UPDATE trap_oid_mappings SET metric_name=?, triggered_oid=?, resolved_oid=?, description=?, enabled=?, updated=? WHERE id=?",
-            metricName, triggeredOid, blankToNull(resolvedOid), description, Db.flag(enabled), Db.now(), id);
+                       String resolvedOid, String description, Severity severity, boolean enabled) throws SQLException {
+        db.update("UPDATE trap_oid_mappings SET metric_name=?, triggered_oid=?, resolved_oid=?, description=?, severity=?, enabled=?, updated=? WHERE id=?",
+            metricName, triggeredOid, blankToNull(resolvedOid), description, severityOf(severity).name(), Db.flag(enabled), Db.now(), id);
+    }
+
+    private static Severity severityOf(Severity s) {
+        return s == null ? Severity.CRITICAL : s;
+    }
+
+    private static Severity severityOf(String s) {
+        return severityOf(Severity.parse(s));
     }
 
     void deleteMapping(long id) throws SQLException {
@@ -111,7 +122,7 @@ final class TrapRepository {
             """;
         try {
             db.update(sql, trapOid, now, now, deviceName, sourceIp, varbinds);
-        } catch (SQLException ex) { log.error("saveUnknownTrap 失敗: {}", ex.getMessage()); }
+        } catch (SQLException ex) { log.error("Failed to save unknown trap: {}", ex.getMessage()); }
     }
 
     /** 查詢所有未定義 Trap 記錄，依最後出現時間降冪排列 */
@@ -130,7 +141,7 @@ final class TrapRepository {
                 return row;
             });
         } catch (SQLException ex) {
-            log.error("queryUnknownTraps 失敗: {}", ex.getMessage());
+            log.error("Failed to query unknown traps: {}", ex.getMessage());
             return new ArrayList<>();
         }
     }
@@ -151,7 +162,7 @@ final class TrapRepository {
             """;
         try {
             db.update(sql, sourceIp, now, now, lastTrapOid, varbinds);
-        } catch (SQLException ex) { log.error("saveUnknownSource 失敗: {}", ex.getMessage()); }
+        } catch (SQLException ex) { log.error("Failed to save unknown source: {}", ex.getMessage()); }
     }
 
     /** 查詢所有未登錄來源記錄，依最後出現時間降冪 */
@@ -169,7 +180,7 @@ final class TrapRepository {
                 return row;
             });
         } catch (SQLException ex) {
-            log.error("queryUnknownSources 失敗: {}", ex.getMessage());
+            log.error("Failed to query unknown sources: {}", ex.getMessage());
             return new ArrayList<>();
         }
     }

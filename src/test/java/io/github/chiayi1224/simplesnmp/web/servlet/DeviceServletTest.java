@@ -202,6 +202,78 @@ class DeviceServletTest {
         assertEquals("newOne", captor.getValue().getCommunity());
     }
 
+    // ─── 連線中斷告警設定 ─────────────────────────────────────────
+
+    @Test
+    void POST_新增設備帶連線中斷告警設定() throws Exception {
+        when(store.loadEnabledDevices()).thenReturn(List.of());
+        post(null, "{\"name\":\"R\",\"host\":\"10.0.0.1\",\"unreachableSeverity\":\"warning\",\"unreachableCount\":3}");
+
+        DeviceConfig d = captureAdded();
+        assertEquals("WARNING", d.getUnreachableSeverity());
+        assertEquals(3, d.getUnreachableCount());
+    }
+
+    @Test
+    void POST_新增設備預設不告警() throws Exception {
+        when(store.loadEnabledDevices()).thenReturn(List.of());
+        post(null, "{\"name\":\"R\",\"host\":\"10.0.0.1\"}");
+
+        DeviceConfig d = captureAdded();
+        assertEquals("", d.getUnreachableSeverity());
+        assertEquals(1, d.getUnreachableCount());
+    }
+
+    @Test
+    void POST_連線中斷告警等級或次數不合法回400() throws Exception {
+        post(null, "{\"name\":\"R\",\"host\":\"10.0.0.1\",\"unreachableSeverity\":\"INFO\"}");
+        post(null, "{\"name\":\"R\",\"host\":\"10.0.0.1\",\"unreachableSeverity\":\"CRITICAL\",\"unreachableCount\":0}");
+
+        verify(resp, times(2)).setStatus(400);
+        verify(store, never()).addDevice(any(DeviceConfig.class));
+    }
+
+    @Test
+    void POST_更新設備未帶連線中斷告警設定_沿用舊值() throws Exception {
+        when(store.loadDevice("Router-01")).thenReturn(new DeviceConfig.Builder("Router-01", "10.0.0.1")
+            .unreachableSeverity("CRITICAL").unreachableCount(4).build());
+        when(store.loadEnabledDevices()).thenReturn(List.of());
+
+        post("/Router-01", "{\"host\":\"10.0.0.99\"}");
+
+        ArgumentCaptor<DeviceConfig> captor = ArgumentCaptor.forClass(DeviceConfig.class);
+        verify(store).updateDeviceByName(captor.capture(), eq(true));
+        assertEquals("CRITICAL", captor.getValue().getUnreachableSeverity());
+        assertEquals(4, captor.getValue().getUnreachableCount());
+    }
+
+    // ─── 磁碟過濾變更 ─────────────────────────────────────────────
+
+    @Test
+    void POST_磁碟過濾改變時解除不再符合的掛載點告警() throws Exception {
+        when(store.loadDevice("Router-01")).thenReturn(new DeviceConfig.Builder("Router-01", "10.0.0.1").build());
+        when(store.loadEnabledDevices()).thenReturn(List.of());
+
+        post("/Router-01", "{\"host\":\"10.0.0.1\",\"diskFilter\":\"/\"}");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.function.Predicate<String>> filter = ArgumentCaptor.forClass(java.util.function.Predicate.class);
+        verify(store).resolveOpenAlerts(eq("Router-01"), filter.capture(), anyString());
+        assertTrue(filter.getValue().test("disk:/data"), "不再符合的掛載點要解除");
+        assertFalse(filter.getValue().test("disk:/"), "仍符合的掛載點保留");
+        assertFalse(filter.getValue().test("cpu"), "非磁碟指標不受影響");
+    }
+
+    @Test
+    void POST_磁碟過濾未改變時不解除告警() throws Exception {
+        when(store.loadDevice("Router-01")).thenReturn(new DeviceConfig.Builder("Router-01", "10.0.0.1").diskFilter("/").build());
+        when(store.loadEnabledDevices()).thenReturn(List.of());
+
+        post("/Router-01", "{\"host\":\"10.0.0.1\"}");
+
+        verify(store, never()).resolveOpenAlerts(any(), any(), any());
+    }
+
     // ─── POST /api/devices/{name}（刪除） ────────────────────────
 
     @Test

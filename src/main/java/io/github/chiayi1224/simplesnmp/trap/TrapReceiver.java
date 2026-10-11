@@ -5,6 +5,7 @@ import io.github.chiayi1224.simplesnmp.config.TrapOidMapping.Mapping;
 import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import io.github.chiayi1224.simplesnmp.threshold.AlertEvent;
+import io.github.chiayi1224.simplesnmp.threshold.Severity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.snmp4j.CommandResponder;
@@ -120,7 +121,7 @@ public class TrapReceiver implements CommandResponder {
         snmp.addCommandResponder(this);
         snmp.listen();
 
-        log.info("Trap Receiver 啟動，port={}，已知設備 {} 台，OID 對應 {} 組",
+        log.info("Trap receiver started on port {}, {} known devices, {} OID mappings",
             listenPort, ipToDevice.size(), triggeredIndex.size());
     }
 
@@ -135,7 +136,7 @@ public class TrapReceiver implements CommandResponder {
      */
     public void reloadDevices(List<DeviceConfig> devices) {
         applyDevices(devices);
-        log.info("Trap Receiver 設備清單已重新載入，共 {} 台", ipToDevice.size());
+        log.info("Trap receiver device list reloaded: {} devices", ipToDevice.size());
     }
 
     /**
@@ -143,7 +144,7 @@ public class TrapReceiver implements CommandResponder {
      */
     public void reloadV3Users(List<V3UserConfig> newUsers) {
         applyV3Users(newUsers);
-        log.info("SNMPv3 USM 使用者已重新載入，共 {} 個", newUsers.size());
+        log.info("SNMPv3 USM users reloaded: {} users", newUsers.size());
     }
 
     /**
@@ -151,7 +152,7 @@ public class TrapReceiver implements CommandResponder {
      */
     public void reloadMappings(List<Mapping> newMappings) {
         applyMappings(newMappings);
-        log.info("Trap Receiver OID 對應表已重新載入，共 {} 組", newMappings.size());
+        log.info("Trap receiver OID mappings reloaded: {} mappings", newMappings.size());
     }
 
     private void applyDevices(List<DeviceConfig> devices) {
@@ -181,13 +182,13 @@ public class TrapReceiver implements CommandResponder {
         String peerIp = extractIp(event.getPeerAddress() != null
             ? event.getPeerAddress().toString() : "unknown");
         int model = event.getMessageProcessingModel();
-        log.debug("收到 {} from={} version={}", PDU.getTypeString(pdu.getType()), peerIp, snmpVersion(model));
+        log.debug("Received {} from={} version={}", PDU.getTypeString(pdu.getType()), peerIp, snmpVersion(model));
 
         // v1 / v2c：檢查 community（v3 已由 USM 驗證）
         if (model != MessageProcessingModel.MPv3) {
             String community = new String(event.getSecurityName(), StandardCharsets.UTF_8);
             if (!isCommunityAccepted(community)) {
-                log.warn("拒絕 Trap from={}：community 不在允許清單內", peerIp);
+                log.warn("Rejected trap from={}: community not in allowed list", peerIp);
                 event.setProcessed(true);
                 return;
             }
@@ -229,7 +230,7 @@ public class TrapReceiver implements CommandResponder {
                 response, event.getMaxSizeResponsePDU(),
                 event.getStateReference(), new StatusInformation());
         } catch (MessageException e) {
-            log.warn("INFORM 回覆失敗: {}", e.getMessage());
+            log.warn("Failed to respond to INFORM: {}", e.getMessage());
         }
     }
 
@@ -279,7 +280,7 @@ public class TrapReceiver implements CommandResponder {
         // ② 取出 trap OID（v1 已在 processPdu 轉換補上；仍缺少代表封包格式不正確）
         String trapOid = bindings.get(SNMP_TRAP_OID_KEY);
         if (trapOid == null) {
-            log.warn("收到 Trap from={} ({})，缺少 snmpTrapOID.0，略過", deviceName, peerIp);
+            log.warn("Trap from={} ({}) has no snmpTrapOID.0, ignored", deviceName, peerIp);
             return;
         }
 
@@ -288,7 +289,7 @@ public class TrapReceiver implements CommandResponder {
 
         // ④ 未登錄來源 IP：記錄到 unknown_sources（不影響後續 OID 處理）
         if (!knownSource) {
-            log.info("未登錄來源 IP={} trapOid={}", peerIp, trapOid);
+            log.info("Trap from unregistered source IP={} trapOid={}", peerIp, trapOid);
             store.saveUnknownSource(peerIp, trapOid, message);
         }
 
@@ -301,7 +302,7 @@ public class TrapReceiver implements CommandResponder {
             handleResolved(deviceName, resolved, message);
         } else {
             // 未定義 OID：完整記錄到 DB，同一 OID 只保留一筆（計次更新）
-            log.info("未定義 trap from={} ({}) trapOid={}", deviceName, peerIp, trapOid);
+            log.info("Undefined trap from={} ({}) trapOid={}", deviceName, peerIp, trapOid);
             store.saveUnknownTrap(trapOid, deviceName, peerIp, message);
         }
     }
@@ -323,12 +324,12 @@ public class TrapReceiver implements CommandResponder {
         String metric = mapping.metricName();
 
         if (store.hasOpenAlert(deviceName, metric)) {
-            log.debug("TRIGGERED trap {} {} 已有開放告警，略過", deviceName, metric);
+            log.debug("Trap TRIGGERED {} {} ignored: alert already open", deviceName, metric);
             return;
         }
 
-        log.warn("🔴 TRIGGERED trap {} metric={} msg={}", deviceName, metric, message);
-        store.saveAlertEvent(AlertEvent.triggered(deviceName, metric, 0, 0, message));
+        log.warn("Trap TRIGGERED {} {} metric={} msg={}", mapping.severity(), deviceName, metric, message);
+        store.saveAlertEvent(AlertEvent.triggered(deviceName, metric, mapping.severity(), 0, 0, message));
     }
 
     // ─── RESOLVED ─────────────────────────────────────────────────
@@ -336,13 +337,15 @@ public class TrapReceiver implements CommandResponder {
     private void handleResolved(String deviceName, Mapping mapping, String message) {
         String metric = mapping.metricName();
 
-        if (!store.hasOpenAlert(deviceName, metric)) {
-            log.debug("RESOLVED trap {} {} 無對應告警，略過", deviceName, metric);
+        // 解除事件的等級沿用解除前的等級
+        Severity open = store.openAlertSeverity(deviceName, metric);
+        if (open == null) {
+            log.debug("Trap RESOLVED {} {} ignored: no open alert", deviceName, metric);
             return;
         }
 
-        log.info("🟢 RESOLVED trap {} metric={} msg={}", deviceName, metric, message);
-        store.saveAlertEvent(AlertEvent.resolved(deviceName, metric, 0, 0, message));
+        log.info("Trap RESOLVED {} {} metric={} msg={}", open, deviceName, metric, message);
+        store.saveAlertEvent(AlertEvent.resolved(deviceName, metric, open, 0, 0, message));
     }
 
     // ─── USM（v3）────────────────────────────────────────────────
@@ -352,7 +355,7 @@ public class TrapReceiver implements CommandResponder {
         usm.removeAllUsers();
         for (V3UserConfig user : users) {
             usm.addUser(buildUsmUser(user));
-            log.info("USM 登錄 user={} auth={} priv={}",
+            log.info("USM user registered: user={} auth={} priv={}",
                 user.getUsername(),
                 user.hasAuth() ? "yes" : "no",
                 user.hasPriv() ? "yes" : "no");

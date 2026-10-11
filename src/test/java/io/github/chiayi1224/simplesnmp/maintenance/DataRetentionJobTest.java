@@ -122,6 +122,17 @@ class DataRetentionJobTest {
     }
 
     @Test
+    void 告警_最後一筆為CHANGED時保留_仍為未解除() throws Exception {
+        alert("D", "TRIGGERED", 500);
+        alert("D", "CHANGED", 400);
+
+        job.runOnce();
+
+        assertEquals(1, count("alert_events"));
+        assertTrue(store.hasOpenAlert("D", "cpu"));
+    }
+
+    @Test
     void 告警_保留每個指標最後一筆狀態_避免長期未恢復的告警被當成已結束() throws Exception {
         alert("A", "TRIGGERED", 400);                               // A 一直沒恢復：必須保留
         alert("B", "TRIGGERED", 500); alert("B", "RESOLVED", 400);  // B：舊的 TRIGGERED 可刪，最後的 RESOLVED 保留

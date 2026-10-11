@@ -30,7 +30,7 @@ final class DeviceRepository {
         try {
             return db.query("SELECT * FROM devices WHERE enabled=1 ORDER BY name", DeviceRepository::toConfig);
         } catch (SQLException ex) {
-            log.error("loadEnabledDevices 失敗: {}", ex.getMessage());
+            log.error("Failed to load enabled devices: {}", ex.getMessage());
             return new ArrayList<>();
         }
     }
@@ -39,7 +39,7 @@ final class DeviceRepository {
         try {
             return db.query("SELECT * FROM devices ORDER BY name", DeviceRepository::toRow);
         } catch (SQLException ex) {
-            log.error("queryAllDevices 失敗: {}", ex.getMessage());
+            log.error("Failed to query devices: {}", ex.getMessage());
             return new ArrayList<>();
         }
     }
@@ -49,7 +49,7 @@ final class DeviceRepository {
         try {
             return db.queryOne("SELECT * FROM devices WHERE name=?", DeviceRepository::toConfig, name);
         } catch (SQLException ex) {
-            log.error("loadDeviceByName 失敗: {}", ex.getMessage());
+            log.error("Failed to load device by name: {}", ex.getMessage());
             return null;
         }
     }
@@ -59,7 +59,7 @@ final class DeviceRepository {
         try {
             return db.queryOne("SELECT * FROM devices WHERE name=?", DeviceRepository::toRow, name);
         } catch (SQLException ex) {
-            log.error("queryDeviceByName 失敗: {}", ex.getMessage());
+            log.error("Failed to query device by name: {}", ex.getMessage());
             return null;
         }
     }
@@ -77,12 +77,14 @@ final class DeviceRepository {
         db.update("""
             INSERT INTO devices(name, host, port, community, retries, timeout_ms,
                                 snmp_version, v3_user, v3_auth_protocol, v3_auth_password,
-                                v3_priv_protocol, v3_priv_password, profile_id, disk_filter, enabled, created, updated)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)
+                                v3_priv_protocol, v3_priv_password, profile_id, disk_filter,
+                                unreachable_severity, unreachable_count, enabled, created, updated)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)
             """,
             d.getName(), d.getHost(), d.getPort(), d.getCommunity(), d.getRetries(), d.getTimeoutMs(),
             d.getSnmpVersion().label(), nz(d.getV3User()), d.getV3AuthProtocol().name(), nz(d.getV3AuthPassword()),
-            d.getV3PrivProtocol().name(), nz(d.getV3PrivPassword()), d.getProfileId(), d.getDiskFilter(), now, now);
+            d.getV3PrivProtocol().name(), nz(d.getV3PrivPassword()), d.getProfileId(), d.getDiskFilter(),
+            d.getUnreachableSeverity(), d.getUnreachableCount(), now, now);
     }
 
     /** 依名稱更新設備；community 與 v3 密碼為 null 時沿用資料庫中的舊值 */
@@ -95,13 +97,15 @@ final class DeviceRepository {
                    v3_priv_password=COALESCE(?, v3_priv_password),
                    profile_id=?,
                    disk_filter=?,
+                   unreachable_severity=?, unreachable_count=?,
                    updated=?
             WHERE name=?
             """,
             d.getHost(), d.getPort(), d.getCommunity(), Db.flag(enabled), d.getRetries(), d.getTimeoutMs(),
             d.getSnmpVersion().label(), nz(d.getV3User()), d.getV3AuthProtocol().name(),
             d.getV3AuthPassword(), d.getV3PrivProtocol().name(), d.getV3PrivPassword(),
-            d.getProfileId(), d.getDiskFilter(), Db.now(), d.getName());
+            d.getProfileId(), d.getDiskFilter(), d.getUnreachableSeverity(), d.getUnreachableCount(),
+            Db.now(), d.getName());
     }
 
     /** 輪詢時更新設備的 sysObjectID（未變動時不寫入） */
@@ -110,7 +114,7 @@ final class DeviceRepository {
             db.update("UPDATE devices SET sys_object_id=? WHERE name=? AND sys_object_id != ?",
                 sysObjectId, name, sysObjectId);
         } catch (SQLException ex) {
-            log.error("updateSysObjectId 失敗: {}", ex.getMessage());
+            log.error("Failed to update sysObjectID: {}", ex.getMessage());
         }
     }
 
@@ -150,6 +154,21 @@ final class DeviceRepository {
         db.update("DELETE FROM devices WHERE id=?", id);
     }
 
+    /** 指定編號的設備名稱；不存在回傳 null */
+    String nameOf(long id) throws SQLException {
+        return db.queryOne("SELECT name FROM devices WHERE id=?", rs -> rs.getString(1), id);
+    }
+
+    /** 把來源設備的連線中斷告警設定複製到目標設備 */
+    void copyUnreachableSettings(String fromDevice, List<String> toDevices) throws SQLException {
+        for (String to : toDevices) {
+            if (to.equals(fromDevice)) continue;
+            db.update("UPDATE devices SET unreachable_severity=(SELECT unreachable_severity FROM devices WHERE name=?), "
+                    + "unreachable_count=(SELECT unreachable_count FROM devices WHERE name=?), updated=? WHERE name=?",
+                fromDevice, fromDevice, Db.now(), to);
+        }
+    }
+
     void deleteByName(String name) throws SQLException {
         db.update("DELETE FROM devices WHERE name=?", name);
     }
@@ -160,7 +179,7 @@ final class DeviceRepository {
         try {
             db.update("UPDATE devices SET status=?, last_seen=? WHERE name=?", status, lastSeen, deviceName);
         } catch (SQLException ex) {
-            log.error("updateDeviceStatus 失敗: {}", ex.getMessage());
+            log.error("Failed to update device status: {}", ex.getMessage());
         }
     }
 
@@ -184,6 +203,8 @@ final class DeviceRepository {
         row.put("profileId",        nullableLong(rs, "profile_id"));
         row.put("sysObjectId",      rs.getString("sys_object_id"));
         row.put("diskFilter",       rs.getString("disk_filter"));
+        row.put("unreachableSeverity", rs.getString("unreachable_severity"));
+        row.put("unreachableCount",    rs.getInt("unreachable_count"));
         row.put("status",    rs.getString("status"));
         row.put("lastSeen",  rs.getString("last_seen"));
         row.put("created",   rs.getString("created"));
@@ -206,6 +227,8 @@ final class DeviceRepository {
             .profileId(nullableLong(rs, "profile_id"))
             .sysObjectId(rs.getString("sys_object_id"))
             .diskFilter(rs.getString("disk_filter"))
+            .unreachableSeverity(rs.getString("unreachable_severity"))
+            .unreachableCount(rs.getInt("unreachable_count"))
             .build();
     }
 
@@ -213,7 +236,7 @@ final class DeviceRepository {
     private static DeviceConfig.SnmpVersion parseVersion(String s) {
         DeviceConfig.SnmpVersion v = DeviceConfig.SnmpVersion.parse(s);
         if (v == null) {
-            log.warn("設備 SNMP 版本 '{}' 不合法，以 2c 處理", s);
+            log.warn("Invalid SNMP version '{}', falling back to 2c", s);
             return DeviceConfig.SnmpVersion.V2C;
         }
         return v;

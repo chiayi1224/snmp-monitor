@@ -118,6 +118,13 @@ class ProfileResolverTest {
     }
 
     @Test
+    void 驗證_device_unreachable為保留名稱() {
+        assertNotNull(new MetricProfile(null, "X", "", "", false,
+            List.of(metric("device_unreachable", MetricKind.VALUE, Map.of("oid", "1.1")))).validate());
+        assertTrue(ProfileMetric.isReservedKey("device_unreachable"));
+    }
+
+    @Test
     void 驗證_前綴格式與名稱必填() {
         assertNotNull(new MetricProfile(null, "X", "", "1.3.x", false, List.of()).validate());
         assertNotNull(new MetricProfile(null, " ", "", "", false, List.of()).validate());
