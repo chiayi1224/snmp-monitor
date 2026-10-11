@@ -129,7 +129,7 @@ section "2. 啟動伺服器"
 rm -f "$COOKIE_JAR"
 
 # 8080 已有服務在執行（例如 run.sh 啟動的實例）時不可繼續，否則測試會打到正式資料
-if curl -s -o /dev/null --max-time 2 "${BASE}/login.html"; then
+if curl -s -o /dev/null --max-time 2 "${BASE}/api/info"; then
   fail "${BASE} 已有服務在執行，請先停止後再測試（測試不會動到它的資料庫，但會與它搶用埠口）"
   exit 1
 fi
@@ -145,7 +145,7 @@ log "PID=$SERVER_PID，等待就緒（最多 20 秒）..."
 
 READY=false
 for i in $(seq 1 20); do
-  if curl -s -o /dev/null "${BASE}/login.html"; then
+  if curl -s -o /dev/null "${BASE}/api/info"; then
     ok "伺服器已就緒（${i}s）"
     READY=true
     break
@@ -162,6 +162,25 @@ if [[ "$READY" == "false" ]]; then
   fail "伺服器未在 20 秒內就緒"
   exit 1
 fi
+
+# ═════════════════════════════════════════════════════════════════
+section "2-1. 網頁介面（前端外殼與快取）"
+# ═════════════════════════════════════════════════════════════════
+
+HOME_HEADERS=$(curl -s -D - -o /tmp/snmp-test-home.html "${BASE}/")
+if echo "$HOME_HEADERS" | head -1 | grep -q " 200"; then ok "未登入可取得首頁"; else fail "首頁回應不是 200：$(echo "$HOME_HEADERS" | head -1)"; fi
+if grep -q '<div id="app">' /tmp/snmp-test-home.html; then ok "首頁為前端單頁應用"; else fail "首頁內容不是前端單頁應用"; fi
+if echo "$HOME_HEADERS" | grep -qi '^Cache-Control: no-cache'; then ok "首頁 Cache-Control: no-cache"; else fail "首頁缺少 no-cache"; fi
+ASSET=$(grep -oE '/assets/[^"]+\.js' /tmp/snmp-test-home.html | head -1)
+ASSET_HEADERS=$(curl -s -D - -o /dev/null "${BASE}${ASSET}")
+if echo "$ASSET_HEADERS" | head -1 | grep -q " 200" && echo "$ASSET_HEADERS" | grep -qi 'immutable'; then
+  ok "靜態資源可取得且長期快取（${ASSET}）"
+else
+  fail "靜態資源 ${ASSET} 回應或快取標頭不正確"
+fi
+rm -f /tmp/snmp-test-home.html
+OLD_LOGIN=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "${BASE}/login.html")
+if [[ "$OLD_LOGIN" == "302 ${BASE}/" ]]; then ok "舊的 /login.html 導向首頁"; else fail "舊登入頁未導向首頁：$OLD_LOGIN"; fi
 
 # ═════════════════════════════════════════════════════════════════
 section "3. 版本資訊 API"
@@ -181,6 +200,16 @@ section "4. 認證 API"
 # 3.1 錯誤密碼
 call POST /api/auth/login -d '{"username":"admin","password":"wrong"}'
 assert_status "登入失敗（錯誤密碼）" 401
+
+# 3.1b 錯誤訊息依 Accept-Language
+EN_BODY=$(curl -s -X POST -H "Content-Type: application/json" -H "Accept-Language: en" \
+  -d '{"username":"admin","password":"wrong"}' "${BASE}/api/auth/login")
+if echo "$EN_BODY" | grep -q "Incorrect username or password"; then ok "Accept-Language: en 回傳英文錯誤訊息"; else fail "英文錯誤訊息不正確：$EN_BODY"; fi
+CN_BODY=$(curl -s -X POST -H "Content-Type: application/json" -H "Accept-Language: zh-CN" \
+  -d '{"username":"admin","password":"wrong"}' "${BASE}/api/auth/login")
+if echo "$CN_BODY" | grep -q "账号或密码错误"; then ok "Accept-Language: zh-CN 回傳簡體中文錯誤訊息"; else fail "簡體中文錯誤訊息不正確：$CN_BODY"; fi
+UNAUTH_EN=$(curl -s -H "Accept-Language: en" "${BASE}/api/admin/devices")
+if echo "$UNAUTH_EN" | grep -q "Not logged in"; then ok "未登入的 401 訊息依語系（英文）"; else fail "401 英文訊息不正確：$UNAUTH_EN"; fi
 
 # 3.2 未登入呼叫受保護 API 回 401
 call POST /api/v1/status -d '{}'

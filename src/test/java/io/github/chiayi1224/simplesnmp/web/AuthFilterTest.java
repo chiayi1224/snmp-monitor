@@ -50,10 +50,22 @@ class AuthFilterTest {
     // ─── 公開路徑直接放行 ─────────────────────────────────────────
 
     @Test
-    void login頁面不需驗證直接放行() throws Exception {
+    void 前端首頁與靜態資源不需驗證直接放行() throws Exception {
+        for (String p : new String[]{ "/", "/index.html", "/assets/index-AbC123.js", "/favicon.ico" }) {
+            reset(chain);
+            stubPath(p);
+            filter.doFilter(req, resp, chain);
+            verify(chain).doFilter(req, resp);
+        }
+    }
+
+    @Test
+    void 舊的登入頁網址導向首頁() throws Exception {
         stubPath("/login.html");
+        when(req.getSession(false)).thenReturn(null);
         filter.doFilter(req, resp, chain);
-        verify(chain).doFilter(req, resp);
+        verify(resp).sendRedirect("/");
+        verify(chain, never()).doFilter(req, resp);
     }
 
     @Test
@@ -64,17 +76,20 @@ class AuthFilterTest {
     }
 
     @Test
-    void changePassword頁面不需驗證直接放行() throws Exception {
-        stubPath("/change-password.html");
+    void 未登入時資料API仍回401() throws Exception {
+        stubPath("/api/admin/devices");
+        when(req.getSession(false)).thenReturn(null);
+        when(resp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
         filter.doFilter(req, resp, chain);
-        verify(chain).doFilter(req, resp);
+        verify(resp).setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        verify(chain, never()).doFilter(req, resp);
     }
 
     // ─── 有效 Session 放行 ────────────────────────────────────────
 
     @Test
     void 有效Session放行受保護頁面() throws Exception {
-        stubPath("/index.html");
+        stubPath("/some-page");
         when(req.getSession(false)).thenReturn(session);
         when(session.getAttribute("user")).thenReturn(java.util.Map.of("username", "admin"));
 
@@ -108,13 +123,13 @@ class AuthFilterTest {
     }
 
     @Test
-    void 未登入頁面請求跳轉登入頁() throws Exception {
-        stubPath("/index.html");
+    void 未登入頁面請求導向首頁() throws Exception {
+        stubPath("/some-page");
         when(req.getSession(false)).thenReturn(null);
 
         filter.doFilter(req, resp, chain);
 
-        verify(resp).sendRedirect("/login.html");
+        verify(resp).sendRedirect("/");
         verify(chain, never()).doFilter(req, resp);
     }
 
@@ -300,15 +315,15 @@ class AuthFilterTest {
     }
 
     @Test
-    void mustChange存取頁面導向改密碼頁() throws Exception {
-        stubPath("/index.html");
+    void mustChange存取非API頁面導向首頁() throws Exception {
+        stubPath("/some-page");
         when(req.getMethod()).thenReturn("GET");
         when(req.getSession(false)).thenReturn(session);
         when(session.getAttribute("user")).thenReturn(mustChangeUser(1));
 
         filter.doFilter(req, resp, chain);
 
-        verify(resp).sendRedirect("/change-password.html");
+        verify(resp).sendRedirect("/");
         verify(chain, never()).doFilter(req, resp);
     }
 
@@ -383,18 +398,18 @@ class AuthFilterTest {
     }
 
     @Test
-    void 被撤銷的session開頁面_導回登入頁() throws Exception {
+    void 被撤銷的session開頁面_導回首頁() throws Exception {
         SessionRevocation revocation = new SessionRevocation();
         AuthFilter f = new AuthFilter(store, revocation);
         revocation.revokeUser(2L);
-        stubPath("/index.html");
+        stubPath("/some-page");
         when(req.getSession(false)).thenReturn(session);
         when(session.getAttribute("user")).thenReturn(Map.of("id", 2L, "username", "bob", "role", "admin"));
 
         f.doFilter(req, resp, chain);
 
         verify(session).invalidate();
-        verify(resp).sendRedirect("/login.html");
+        verify(resp).sendRedirect("/");
         verify(chain, never()).doFilter(req, resp);
     }
 
@@ -403,7 +418,7 @@ class AuthFilterTest {
         SessionRevocation revocation = new SessionRevocation();
         AuthFilter f = new AuthFilter(store, revocation);
         revocation.revokeUser(2L);
-        stubPath("/index.html");
+        stubPath("/some-page");
         when(req.getSession(false)).thenReturn(session);
         when(session.getAttribute("user")).thenReturn(Map.of("id", 1L, "username", "admin", "role", "admin"));
 

@@ -23,6 +23,13 @@
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.build.timestamp.format>yyyy-MM-dd HH:mm:ss</maven.build.timestamp.format>
+
+        <!-- 前端（frontend/，Vue 3 + Naive UI）：由 Maven 下載 Node 並建置，結果打包進 JAR 的 static/。
+             離線建置可改用內部鏡像：-Dnode.download.root=… -Dnpm.registry=…；只改後端時可加 -Dskip.frontend=true -->
+        <node.version>v24.21.0</node.version>
+        <node.download.root>https://nodejs.org/dist/</node.download.root>
+        <npm.registry>https://registry.npmjs.org/</npm.registry>
+        <skip.frontend>false</skip.frontend>
     </properties>
 
     <dependencies>
@@ -111,6 +118,11 @@
             <resource>
                 <directory>src/main/resources</directory>
             </resource>
+            <!-- 前端建置結果（frontend-maven-plugin 於 generate-resources 階段產生） -->
+            <resource>
+                <directory>${project.basedir}/frontend/dist</directory>
+                <targetPath>static</targetPath>
+            </resource>
             <!-- 授權文件放進 JAR 的 META-INF/（第三方授權義務：散布時須附上） -->
             <resource>
                 <directory>${project.basedir}</directory>
@@ -122,6 +134,66 @@
             </resource>
         </resources>
         <plugins>
+            <!-- 前端：安裝 Node、npm ci、建置（generate-resources），單元測試（test，-DskipTests 時略過） -->
+            <plugin>
+                <groupId>com.github.eirslett</groupId>
+                <artifactId>frontend-maven-plugin</artifactId>
+                <version>2.0.2</version>
+                <configuration>
+                    <workingDirectory>frontend</workingDirectory>
+                    <installDirectory>frontend</installDirectory>
+                    <skip>${skip.frontend}</skip>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>install-node-and-npm</id>
+                        <goals><goal>install-node-and-npm</goal></goals>
+                        <phase>generate-resources</phase>
+                        <configuration>
+                            <nodeVersion>${node.version}</nodeVersion>
+                            <nodeDownloadRoot>${node.download.root}</nodeDownloadRoot>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-ci</id>
+                        <goals><goal>npm</goal></goals>
+                        <phase>generate-resources</phase>
+                        <configuration>
+                            <arguments>ci --no-audit --no-fund</arguments>
+                            <npmRegistryURL>${npm.registry}</npmRegistryURL>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-build</id>
+                        <goals><goal>npm</goal></goals>
+                        <phase>generate-resources</phase>
+                        <configuration>
+                            <arguments>run build</arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-test</id>
+                        <goals><goal>npm</goal></goals>
+                        <phase>test</phase>
+                        <configuration>
+                            <arguments>run test</arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- mvn clean 一併清除前端建置結果（node_modules 與下載的 Node 保留以加速） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-clean-plugin</artifactId>
+                <version>3.4.0</version>
+                <configuration>
+                    <filesets>
+                        <fileset><directory>frontend/dist</directory></fileset>
+                    </filesets>
+                </configuration>
+            </plugin>
+
             <!-- JUnit 5 執行器 -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

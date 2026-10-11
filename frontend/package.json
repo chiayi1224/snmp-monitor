@@ -1,0 +1,33 @@
+{
+  "name": "snmp-monitor-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "SNMP Monitor 網頁管理介面（Vue 3 + Naive UI，建置結果打包進 JAR，執行時完全離線）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "test": "vitest run",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vicons/ionicons5": "^0.13.0",
+    "naive-ui": "^2.45.3",
+    "vue": "^3.5.43",
+    "vue-i18n": "^11.4.14",
+    "vue-router": "^5.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "@vue/test-utils": "^2.5.1",
+    "jsdom": "^30.1.2",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.3",
+    "vue-tsc": "^3.3.13"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

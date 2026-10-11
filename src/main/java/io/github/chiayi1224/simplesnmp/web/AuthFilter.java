@@ -17,7 +17,7 @@ import java.util.Set;
  * 認證 Filter
  *
  * 路徑規則：
- *   PUBLIC_PATHS    → 直接放行
+ *   PUBLIC_PATHS、/assets/* → 直接放行（前端外殼與其靜態資源，不含任何資料）
  *   /api/v1/*       → Session 或 Bearer Token 皆可（外部 API）
  *   /api/admin/*    → 僅 Session（Bearer Token 回 403，管理介面不對外開放）
  *   /api/auth/*     → 僅 Session（login 已在 PUBLIC_PATHS 放行）
@@ -35,11 +35,19 @@ import java.util.Set;
 public class AuthFilter implements Filter {
 
     private static final Set<String> PUBLIC_PATHS = Set.of(
-        "/login.html",
-        "/change-password.html",
+        "",
+        "/",
+        "/index.html",
+        "/favicon.ico",
         "/api/auth/login",
         "/api/info"
     );
+
+    /** 前端建置產生的靜態資源（帶雜湊的檔名） */
+    private static final String ASSETS_PREFIX = "/assets/";
+
+    /** 非 API 的頁面請求一律導向前端首頁，由前端決定顯示登入、改密碼或功能頁 */
+    private static final String HOME = "/";
 
     // 修改自己密碼的路徑：PUT /api/admin/users/{id}/password
     private static final java.util.regex.Pattern OWN_PASSWORD_PATH =
@@ -103,7 +111,7 @@ public class AuthFilter implements Filter {
                     + (pathInfo    == null ? "" : pathInfo);
 
         // ── 公開路徑 ──────────────────────────────────────────────
-        if (PUBLIC_PATHS.contains(path)) {
+        if (PUBLIC_PATHS.contains(path) || (path.startsWith(ASSETS_PREFIX) && !path.contains(".."))) {
             chain.doFilter(req, res);
             return;
         }
@@ -150,7 +158,7 @@ public class AuthFilter implements Filter {
                 if (path.startsWith("/api/")) {
                     sendError(response, 401, Msg.of("auth.session_expired"));
                 } else {
-                    response.sendRedirect("/login.html");
+                    response.sendRedirect(HOME);
                 }
                 return;
             }
@@ -174,7 +182,7 @@ public class AuthFilter implements Filter {
                         store.saveAuditLog("MUST_CHANGE_BLOCKED", actor, ip, method, rawUri, 403, StoredText.encode(Msg.of("audit.must_change_blocked")));
                         sendError(response, 403, Msg.of("auth.must_change_first"));
                     } else {
-                        response.sendRedirect("/change-password.html");
+                        response.sendRedirect(HOME);
                     }
                     return;
                 }
@@ -203,7 +211,7 @@ public class AuthFilter implements Filter {
         if (path.startsWith("/api/")) {
             sendError(response, 401, Msg.of("auth.not_logged_in"));
         } else {
-            response.sendRedirect("/login.html");
+            response.sendRedirect(HOME);
         }
     }
 

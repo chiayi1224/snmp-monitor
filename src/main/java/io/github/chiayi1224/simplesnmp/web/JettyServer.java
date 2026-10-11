@@ -88,6 +88,7 @@ public class JettyServer {
         SessionRevocation revocation = new SessionRevocation();
         // 語系必須最先設定：之後的 Filter 與 Servlet 產生的使用者訊息都依它決定語言
         ctx.addFilter(new FilterHolder(new LocaleFilter()), "/*", EnumSet.of(DispatcherType.REQUEST));
+        ctx.addFilter(new FilterHolder(new StaticCacheFilter()), "/*", EnumSet.of(DispatcherType.REQUEST));
         ctx.addFilter(
             new FilterHolder(new AuthFilter(store, revocation)),
             "/*",
@@ -116,12 +117,17 @@ public class JettyServer {
         ctx.addServlet(new ServletHolder(new DiscoveryServlet(store, discovery)),       "/api/admin/discovery/*");
         ctx.addServlet(new ServletHolder(new ProfileServlet(store, profilePreview)),    "/api/admin/profiles/*");
 
-        // ── 靜態檔案 ──────────────────────────────────────────────
-        String staticBase = JettyServer.class.getResource("/static").toExternalForm();
-        ServletHolder staticHolder = new ServletHolder("static", DefaultServlet.class);
-        staticHolder.setInitParameter("resourceBase", staticBase);
-        staticHolder.setInitParameter("dirAllowed", "false");
-        ctx.addServlet(staticHolder, "/");
+        // ── 前端（Vue 建置結果，打包在 JAR 的 static/）──────────────
+        java.net.URL staticRoot = JettyServer.class.getResource("/static");
+        if (staticRoot == null) {
+            log.warn("Web UI is not bundled (built with -Dskip.frontend=true); only the API is available");
+        } else {
+            ServletHolder staticHolder = new ServletHolder("static", DefaultServlet.class);
+            staticHolder.setInitParameter("resourceBase", staticRoot.toExternalForm());
+            staticHolder.setInitParameter("dirAllowed", "false");
+            ctx.setWelcomeFiles(new String[]{ "index.html" });
+            ctx.addServlet(staticHolder, "/");
+        }
 
         server.setHandler(ctx);
         server.start();
