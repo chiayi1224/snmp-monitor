@@ -41,5 +41,5 @@
 
 ## 7. 整合檢查
 
-- [ ] 7.1 `mvn -B clean verify` 與 `./test.sh --skip-build` 全數通過，CI 綠燈
+- [x] 7.1 `mvn -B clean verify` 與 `./test.sh --skip-build` 全數通過，CI 綠燈
 - [x] 7.2 以既有資料庫（含全域閾值與未解除告警）升級實測：每台設備取得與原本相同的 Critical 閾值，未解除告警在下一輪不重複觸發；並以本機 Net-SNMP 設定 Warning／Critical 觀察一次升級與降級
