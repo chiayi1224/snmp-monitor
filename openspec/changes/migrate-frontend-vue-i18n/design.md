@@ -64,10 +64,12 @@
 - 新增 `i18n` 套件：
   - `Msg`：訊息代碼與參數的不可變值物件（`record Msg(String key, Object... args)`）。
   - `Messages`：以 `ResourceBundle`（`i18n/messages*.properties`，UTF-8）與 `MessageFormat` 產生文字；`resolve(Accept-Language)` 依 D6 相同的對應規則選出 `zh_TW`／`zh_CN`／`en`，預設 `zh_TW`；使用不回退到 JVM 預設語系的 Control，避免伺服器 OS 語系影響結果。缺鍵時回退正體中文，再缺則回傳代碼並記錄 warn log。
-  - `LocalizedException`：帶 `Msg` 的例外基底；`getMessage()` 回傳英文（供 log 使用），Servlet 以請求語系另行產生使用者訊息。`SnmpException`、`MetricException`、`DeviceNotFoundException` 改為繼承或攜帶 `Msg`。
+  - `LocalizedException`：帶 `Msg` 的例外基底；`getMessage()` 回傳英文（供 log 使用），Servlet 以請求語系另行產生使用者訊息。`SnmpException`、`MetricException`、`DeviceNotFoundException`、`UserRepository.LastActiveUserException` 改為繼承或攜帶 `Msg`。
+  - 種子資料（系統設定說明、內建範本說明、預設 Trap 對應說明）改由語系檔的正體中文產生後寫入資料庫，程式中不再有中文字串；顯示時設定說明與內建範本另依請求語系翻譯（D9）。
 - 基底檔 `messages.properties` 為正體中文，另有 `messages_zh_CN.properties`、`messages_en.properties`。單元測試確認三份鍵集合一致，且每則訊息的 `MessageFormat` 參數數量一致。
 - 驗證方法（`validate()`）改回傳 `Msg`（合法時 null），呼叫端以請求語系格式化。
-- `BaseJsonServlet` 新增 `locale(req)`、`writeError(resp, status, Msg)`、`text(req, Msg)`；`writeError(resp, status, String)` 保留給已在別處格式化的文字。`AuthFilter` 的錯誤回應同樣依請求語系。
+- 請求語系由 `LocaleFilter`（排在所有 Filter 之前）依 `Accept-Language` 存入 ThreadLocal，請求結束清除；`Messages.get(Msg)` 預設使用它。如此 `BaseJsonServlet` 只需新增 `writeError(resp, status, Msg)` 與 `t(key, args)`，既有的 `requireText(body, field, resp)` 等方法不必多傳 `req`。`writeError(resp, status, String)` 保留給已在別處格式化的文字。`AuthFilter` 的錯誤回應同樣依請求語系。背景執行緒（輪詢、Trap、掃描）沒有請求語系，產生的文字一律以 D8 的編碼保存。
+- 帶訊息代碼的例外共用 `Localized` 介面（`SnmpException` 須繼承 `IOException`，無法共用基底類別）。
 - 代碼命名：`<領域>.<情境>`，例如 `device.not_found`、`threshold.warning_must_be_lower`、`alert.unreachable.snmp`。
 
 ### D8. 存入資料庫之系統文字
