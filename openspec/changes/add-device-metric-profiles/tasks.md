@@ -38,5 +38,6 @@
 
 ## 6. 整合檢查
 
-- [ ] 6.1 `mvn -B clean verify` 與 `./test.sh --skip-build` 全數通過，CI 綠燈
+- [x] 6.1 `mvn -B clean verify` 與 `./test.sh --skip-build` 全數通過，CI 綠燈
 - [ ] 6.2 以真實設備（Linux Net-SNMP、Cisco 或其他網路設備、Windows）實測：Linux 數值與升級前一致、其他設備出現 CPU／記憶體數值（需使用者在有設備的環境執行）
+  - 2026-10-11 進度：本機 Ubuntu 24.04 的 Net-SNMP 5.9.4（v2c 與 v3）已自動套用「Net-SNMP（UCD-SNMP）」範本，CPU 約 6%（與 `snmpget` 的 idle 93 相近）、記憶體 33%（符合總量減可用、緩衝、快取的算法）、磁碟皆有數值。尚未與升級前的數值逐項比對。待測：Cisco 或其他網路設備、Windows。
