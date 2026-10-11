@@ -1,5 +1,5 @@
 # 持續整合：每次 push 到 main 與每個 PR 都會執行
-#   1. 單元測試 + 打包（mvn clean verify）
+#   1. 單元測試 + 打包（mvn clean verify，含前端建置與 Vitest）
 #   2. 整合測試（test.sh：啟動 JAR 並以 curl 驗證所有 API）
 name: CI
 
@@ -34,7 +34,15 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: 單元測試與打包
+      # 前端由 frontend-maven-plugin 建置：Node 下載到 ~/.m2（已由 setup-java 快取），npm 套件快取於 ~/.npm
+      - name: 快取 npm 套件
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+
+      - name: 單元測試與打包（含前端建置與測試）
         run: mvn -B clean verify
 
       - name: 整合測試（API）
