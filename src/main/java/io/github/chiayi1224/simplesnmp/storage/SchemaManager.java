@@ -311,6 +311,7 @@ final class SchemaManager {
         "ALTER TABLE devices ADD COLUMN v3_priv_password TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE devices ADD COLUMN profile_id INTEGER",
         "ALTER TABLE devices ADD COLUMN sys_object_id TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE devices ADD COLUMN disk_filter TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE threshold_settings ADD COLUMN direction TEXT NOT NULL DEFAULT 'HIGH'",
     };
 

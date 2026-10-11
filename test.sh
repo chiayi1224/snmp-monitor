@@ -348,6 +348,36 @@ assert_status "v3 密碼少於 8 字元回 400" 400
 call POST "/api/admin/devices/Core-V3" -d '{"action":"delete"}'
 assert_status "刪除 v3 設備" 200
 
+# ── 磁碟過濾 ──────────────────────────────────────────────────────
+call POST /api/admin/devices -d '{"name":"Disk-Filter","host":"192.168.1.70","diskFilter":" / , /data,, / "}'
+assert_status "新增設備並設定磁碟過濾" 201
+call POST /api/v1/devices/Disk-Filter -d '{}'
+assert_contains "磁碟過濾條件已整理並儲存" '"diskFilter" : "/,/data"'
+
+call POST "/api/admin/devices/Disk-Filter" -d '{"host":"192.168.1.71"}'
+assert_status "更新設備（不帶 diskFilter）" 200
+call POST /api/v1/devices/Disk-Filter -d '{}'
+assert_contains "未帶 diskFilter 時沿用原值" '"diskFilter" : "/,/data"'
+
+call POST "/api/admin/devices/Disk-Filter" -d '{"host":"192.168.1.71","diskFilter":""}'
+assert_status "清除磁碟過濾" 200
+call POST /api/v1/devices/Disk-Filter -d '{}'
+assert_contains "磁碟過濾已清除（全部）" '"diskFilter" : ""'
+
+LONG_FILTER=$(printf '/%.0s' $(seq 1 600))
+call POST "/api/admin/devices/Disk-Filter" -d "{\"host\":\"192.168.1.71\",\"diskFilter\":\"${LONG_FILTER}a\"}"
+assert_status "磁碟過濾條件過長回 400" 400
+
+call POST "/api/admin/devices/Disk-Filter" -d '{"action":"delete"}'
+assert_status "刪除磁碟過濾測試設備" 200
+
+call POST /api/admin/devices -d '{"action":"probe-disks"}'
+assert_status "探測磁碟缺少 host 回 400" 400
+call POST /api/admin/devices/NoSuchDevice -d '{"action":"probe-disks","host":"127.0.0.1"}'
+assert_status "探測不存在的設備回 404" 404
+call POST /api/admin/devices -d '{"action":"probe-disks","host":"127.0.0.1","snmpVersion":"3"}'
+assert_status "探測 v3 缺使用者回 400" 400
+
 # ═════════════════════════════════════════════════════════════════
 section "7. Trap OID 對應管理 API"
 # ═════════════════════════════════════════════════════════════════

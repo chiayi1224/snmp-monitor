@@ -1,6 +1,7 @@
 package io.github.chiayi1224.simplesnmp.poller;
 
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
+import io.github.chiayi1224.simplesnmp.config.DiskFilter;
 import io.github.chiayi1224.simplesnmp.config.OidConstants;
 import io.github.chiayi1224.simplesnmp.model.DeviceStatus;
 import io.github.chiayi1224.simplesnmp.model.DiskInfo;
@@ -158,7 +159,7 @@ public class SnmpPoller {
         }
 
         // ── 第三層：逐指標儲存與評估 ─────────────────────────────
-        for (ProfileCollector.MetricResult r : ProfileCollector.calculate(profile, fetched)) {
+        for (ProfileCollector.MetricResult r : ProfileCollector.calculate(profile, fetched, DiskFilter.parse(device.getDiskFilter()))) {
             String key = r.metric().metricKey();
             if (r.ok()) {
                 record(name, r.metric(), r.values());

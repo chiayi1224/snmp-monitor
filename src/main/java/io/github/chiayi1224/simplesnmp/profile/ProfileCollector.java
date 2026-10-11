@@ -1,6 +1,8 @@
 package io.github.chiayi1224.simplesnmp.profile;
 
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
+import io.github.chiayi1224.simplesnmp.config.DiskFilter;
+import io.github.chiayi1224.simplesnmp.config.OidConstants;
 import io.github.chiayi1224.simplesnmp.snmp.SnmpException;
 import io.github.chiayi1224.simplesnmp.snmp.SnmpSession;
 import org.snmp4j.smi.Variable;
@@ -104,13 +106,37 @@ public final class ProfileCollector {
         return walks;
     }
 
-    /** 逐一計算範本中已啟用的指標 */
+    /**
+     * 探測設備上可監控的磁碟（hrStorage 的固定磁碟，與內建範本相同），不套用任何過濾；
+     * 供使用者挑選要監控的掛載點。設備沒有 hrStorage 表格時拋出 MetricException。
+     *
+     * @throws SnmpException 設備無回應、v3 認證失敗等
+     */
+    public List<MetricValue> probeDisks(DeviceConfig device) throws IOException, MetricException {
+        MetricProfile probe = new MetricProfile(null, "（磁碟探測）", "", "", false, List.of(
+            new ProfileMetric(ProfileMetric.DISK, MetricKind.STORAGE_TABLE,
+                Map.of("typeFilter", OidConstants.HR_STORAGE_TYPE_FIXED_DISK), "%", true)));
+        // 直接走訪：設備無回應時拋出 SnmpException，不會被誤判成「沒有磁碟資訊」
+        SnmpSession.WalkResult walk = session.walk(device, OidConstants.HR_STORAGE_ENTRY, WALK_MAX_ROWS, 0);
+        SnmpResult result = new SnmpResult(Map.of(), Map.of(OidConstants.HR_STORAGE_ENTRY, walk.rows()));
+        MetricResult r = calculate(probe, new Fetched(result, Map.of())).get(0);
+        if (!r.ok()) throw new MetricException(r.error());
+        return r.values();
+    }
+
+    /** 逐一計算範本中已啟用的指標（不過濾磁碟） */
     public static List<MetricResult> calculate(MetricProfile profile, Fetched fetched) {
+        return calculate(profile, fetched, DiskFilter.parse(""));
+    }
+
+    /** 逐一計算範本中已啟用的指標；disk 指標只保留符合 diskFilter 的掛載點 */
+    public static List<MetricResult> calculate(MetricProfile profile, Fetched fetched, DiskFilter diskFilter) {
         List<MetricResult> out = new ArrayList<>();
         for (ProfileMetric m : profile.metrics()) {
             if (!m.enabled()) continue;
             try {
                 List<MetricValue> values = m.kind().calculate(m.params(), fetched.result());
+                if (ProfileMetric.DISK.equals(m.metricKey())) values = filterDisks(values, diskFilter);
                 for (MetricValue v : values) {
                     if (!Double.isFinite(v.value())) throw new MetricException("計算結果不是有限數值：" + v.value());
                 }
@@ -120,6 +146,21 @@ public final class ProfileCollector {
             }
         }
         return out;
+    }
+
+    /** 只保留符合過濾條件的磁碟；全部都不符合時視為失敗，並列出設備實際回報的名稱方便修正條件 */
+    private static List<MetricValue> filterDisks(List<MetricValue> values, DiskFilter filter) throws MetricException {
+        if (filter.isAll() || values.isEmpty()) return values;
+        List<MetricValue> kept = new ArrayList<>();
+        for (MetricValue v : values) {
+            if (filter.matches(v.instance())) kept.add(v);
+        }
+        if (kept.isEmpty()) {
+            List<String> names = new ArrayList<>();
+            for (MetricValue v : values) names.add(String.valueOf(v.instance()));
+            throw new MetricException("沒有符合磁碟過濾條件「" + filter.text() + "」的掛載點，設備回報：" + String.join("、", names));
+        }
+        return kept;
     }
 
     /** 表格讀取失敗時，以該錯誤作為指標失敗的原因（比「表格沒有資料」更明確） */

@@ -57,6 +57,7 @@ JettyServer (8080) ◄───────────────────�
    - 每台設備依套用的監控範本收集指標（見第 6 點）：範本所需 OID 與 sysObjectID 合併一次 GET，sysObjectID 改變時同一週期改用新範本；表格同一子樹只 walk 一次。GET 與計算邏輯在 `profile.ProfileCollector`，Poller 與範本預覽共用。
    - `cpu`／`memory`／`disk` 寫入 `cpu_metrics`／`mem_metrics`／`disk_metrics`，其他指標寫入 `custom_metrics`；單一指標失敗只記警告（每台設備每個指標每小時最多一次），不影響其他指標與設備狀態（GET 完全無回應才是 `SNMP_ERROR`）。
    - 每台設備可設定 SNMP 版本（`1`／`2c`／`3`）與 v3 認證；舊設備預設 `2c`。設備 API（`/api/v1/devices`、`/api/admin/devices`）不回傳 community 與 v3 密碼，只回 `communityConfigured`／`v3AuthConfigured`／`v3PrivConfigured`；更新時未帶或留空即沿用舊值（`DeviceRepository.toRow` 不可再加入機密欄位）。
+   - 每台設備可設定磁碟過濾 `disk_filter`（`config.DiskFilter`：逗號分隔的掛載點完整名稱、`*` 萬用字元、不分大小寫，空白代表全部）。過濾在 `ProfileCollector.calculate` 套用於 `disk` 指標，Poller 與範本預覽一致；不符合的磁碟不寫入也不評估閾值，全部不符合時該指標視為失敗。設備對話框的「探測磁碟」呼叫 `POST /api/admin/devices[/{name}]` 帶 `"action":"probe-disks"`（`ProfileCollector.probeDisks`，只列 hrStorage 固定磁碟；既有設備未帶 community／v3 密碼時沿用已儲存的值）。
    - 所有對設備的查詢都透過 `snmp.SnmpSession`（`get()`、`walk()`）：使用自己的 `USM`／`SecurityProtocols`，v3 使用者依設備 engine ID 本地化後加入 USM（同名使用者不同密碼不會互相覆蓋），只發出 GET／GETNEXT／GETBULK。v1 的 GET 遇到 `noSuchName` 會移除該 OID 後重送。
    - 測試可用 `src/test/.../snmp/TestSnmpAgent`（記憶體內的 v1/v2c/v3 agent）做端對端驗證，不需要外部設備。
 3. `ThresholdEngine` 使用狀態機（`ThresholdState`）與 hysteresis 防止告警抖動：CPU/記憶體需連續 3 次超標才觸發，磁碟需 2 次；恢復需連續 2 次低於 rearm 值。

@@ -306,6 +306,50 @@ class SnmpPollerEndToEndTest {
         assertFalse(agent.receivedPduTypes().contains(PDU.GETNEXT), "停用的 disk 不應走訪 hrStorage");
     }
 
+    private void addSecondDisk() {
+        agent.put(OidConstants.HR_STORAGE_TYPE + ".32", new OID(OidConstants.HR_STORAGE_TYPE_FIXED_DISK))
+             .put(OidConstants.HR_STORAGE_DESCR + ".32", "/data")
+             .put(OidConstants.HR_STORAGE_UNIT + ".32", 4096)
+             .put(OidConstants.HR_STORAGE_SIZE + ".32", new Integer32(1000))
+             .put(OidConstants.HR_STORAGE_USED + ".32", new Integer32(300));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> diskMounts() {
+        Map<String, Object> status = store.queryLatestStatus().get(0);
+        return ((List<Map<String, Object>>) status.get("disks")).stream().map(d -> (String) d.get("mountPoint")).toList();
+    }
+
+    @Test
+    void 磁碟過濾_只記錄符合的掛載點() throws Exception {
+        addSecondDisk();
+        store.addDevice(device().diskFilter("/data").build());
+        poller.pollAll();
+
+        assertEquals("ONLINE", store.queryDeviceByName("Host-1").get("status"));
+        assertEquals(List.of("/data"), diskMounts());
+        assertEquals("/data", store.queryDeviceByName("Host-1").get("diskFilter"), "過濾條件應存入資料庫並可由設備 API 讀回");
+    }
+
+    @Test
+    void 磁碟過濾_空白代表全部() throws Exception {
+        addSecondDisk();
+        store.addDevice(device().build());
+        poller.pollAll();
+        assertEquals(List.of("/", "/data"), diskMounts());
+    }
+
+    @Test
+    void 磁碟過濾_沒有任何符合時不寫入磁碟但其他指標照常() throws Exception {
+        addSecondDisk();
+        store.addDevice(device().diskFilter("/nope").build());
+        poller.pollAll();
+
+        assertEquals("ONLINE", store.queryDeviceByName("Host-1").get("status"));
+        assertTrue(diskMounts().isEmpty());
+        assertNotNull(store.queryLatestStatus().get(0).get("cpu"), "CPU 不受磁碟過濾影響");
+    }
+
     @Test
     void 手動指定範本優先於sysObjectID() throws Exception {
         long id = customProfile(true);

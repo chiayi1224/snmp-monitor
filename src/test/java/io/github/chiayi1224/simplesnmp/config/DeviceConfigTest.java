@@ -49,6 +49,15 @@ class DeviceConfigTest {
         assertTrue(s.contains("161"));
     }
 
+    @Test
+    void 磁碟過濾條件_預設全部_儲存前整理_過長回傳錯誤() {
+        assertEquals("", new DeviceConfig("R1", "10.0.0.1", "public").getDiskFilter());
+        assertEquals("/,/data", new DeviceConfig.Builder("R1", "h").diskFilter(" / , /data ,/ ").build().getDiskFilter());
+        assertNull(new DeviceConfig.Builder("R1", "h").diskFilter("/").build().validate());
+        String tooLong = "/" + "a".repeat(DiskFilter.MAX_LENGTH);
+        assertNotNull(new DeviceConfig.Builder("R1", "h").diskFilter(tooLong).build().validate());
+    }
+
     // ─── SNMP 版本與 v3 驗證 ─────────────────────────────────────
 
     private static DeviceConfig.Builder v3(String auth, String priv) {

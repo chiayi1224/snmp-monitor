@@ -101,7 +101,7 @@ public class JettyServer {
         ctx.addServlet(new ServletHolder(new V1DeviceServlet(store)),          "/api/v1/devices/*");
 
         // ── Admin API（Session 限定）──────────────────────────────
-        ctx.addServlet(new ServletHolder(new DeviceServlet(store, trapReceiver)),       "/api/admin/devices/*");
+        ctx.addServlet(new ServletHolder(new DeviceServlet(store, trapReceiver, profilePreview)),       "/api/admin/devices/*");
         ctx.addServlet(new ServletHolder(new UserServlet(store, revocation)),           "/api/admin/users/*");
         ctx.addServlet(new ServletHolder(new TrapMappingServlet(store, trapReceiver)),  "/api/admin/trap-mappings/*");
         ctx.addServlet(new ServletHolder(new UnknownTrapServlet(store)),                "/api/admin/unknown-traps/*");

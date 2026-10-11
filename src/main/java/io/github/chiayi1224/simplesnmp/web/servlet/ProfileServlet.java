@@ -2,6 +2,7 @@ package io.github.chiayi1224.simplesnmp.web.servlet;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
+import io.github.chiayi1224.simplesnmp.config.DiskFilter;
 import io.github.chiayi1224.simplesnmp.profile.MetricKind;
 import io.github.chiayi1224.simplesnmp.profile.MetricProfile;
 import io.github.chiayi1224.simplesnmp.profile.MetricValue;
@@ -127,7 +128,7 @@ public class ProfileServlet extends BaseJsonServlet {
 
         List<ProfileCollector.MetricResult> results;
         try {
-            results = ProfileCollector.calculate(trial, collector.fetch(device, trial));
+            results = ProfileCollector.calculate(trial, collector.fetch(device, trial), DiskFilter.parse(device.getDiskFilter()));
         } catch (SnmpException e) {
             writeError(resp, 502, "設備無法查詢：" + e.getMessage());
             return;

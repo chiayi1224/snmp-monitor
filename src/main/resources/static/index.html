@@ -351,6 +351,14 @@
     <label>監控範本 <span class="hint" id="d-profile-hint" style="color:#1565c0"></span>
       <select id="d-profile"></select>
     </label>
+    <label>只監控的磁碟（選填）
+      <div style="display:flex;gap:6px">
+        <input type="text" id="d-disk-filter" maxlength="500" style="flex:1" placeholder="留空＝全部，可按右側「探測磁碟」挑選">
+        <button type="button" class="btn btn-sm" id="d-disk-probe-btn" onclick="probeDisks()">探測磁碟</button>
+      </div>
+      <div id="d-disk-list" style="display:none;margin-top:6px;border:1px solid #ddd;border-radius:4px;padding:6px 8px;max-height:200px;overflow:auto"></div>
+      <span id="d-disk-msg" style="color:#888;font-size:.8rem">以目前填的連線資料向設備查詢可監控的磁碟，勾選後自動填入；不勾選任何項目代表全部。也可手動輸入，用逗號分隔、* 當萬用字元。不符合的磁碟不記錄、不告警，下次輪詢生效。</span>
+    </label>
     <label><div class="toggle"><input type="checkbox" id="d-enabled" checked><span>啟用監控</span></div></label>
   </div>
   <div class="dialog-footer">
@@ -629,6 +637,10 @@ async function openDeviceDialog(d = null) {
   $('d-community').value = d ? '' : 'public';   // community 不回填；編輯時留空代表沿用原值
   $('d-community').placeholder = d ? '留空不變更' : '';
   $('d-enabled').checked = d ? d.enabled : true;
+  $('d-disk-filter').value = d && d.diskFilter ? d.diskFilter : '';
+  $('d-disk-list').style.display = 'none';
+  $('d-disk-list').innerHTML = '';
+  $('d-disk-msg').style.color = '#888';
   $('d-version').value         = d ? (d.snmpVersion || '2c') : '2c';
   $('d-v3-user').value         = d ? (d.v3User || '') : '';
   $('d-v3-auth-proto').value   = d && d.v3AuthProtocol ? d.v3AuthProtocol : 'SHA';
@@ -644,31 +656,102 @@ async function openDeviceDialog(d = null) {
   $('device-dialog').showModal();
 }
 
+// ─── 探測磁碟：向設備查詢可監控的掛載點，讓使用者勾選 ──────────
+let probedDisks = [];
+
+function fmtBytes(n) {
+  if (n == null) return '—';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0, v = Number(n);
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(i ? 1 : 0)} ${u[i]}`;
+}
+
+// 與後端 DiskFilter 相同的規則：完整名稱、* 萬用字元、不分大小寫
+function diskFilterMatches(filter, name) {
+  const items = filter.split(/[,\n]/).map(x => x.trim()).filter(Boolean);
+  if (!items.length) return true;
+  return items.some(it => new RegExp('^' + it.split('*').map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$', 'i').test(name));
+}
+
+async function probeDisks() {
+  const body = collectDeviceBody();
+  if (!body) return;
+  if (!body.host) { alert('請先填寫 IP / Hostname'); return; }
+  const msg = $('d-disk-msg'), btn = $('d-disk-probe-btn'), list = $('d-disk-list');
+  const origName = $('d-id').value;
+  btn.disabled = true; btn.textContent = '探測中…';
+  msg.style.color = '#888'; msg.textContent = '正在向設備查詢磁碟…';
+  try {
+    const url = origName ? `/api/admin/devices/${encodeURIComponent(origName)}` : '/api/admin/devices';
+    const res = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'},
+                                   body: JSON.stringify({ ...body, action: 'probe-disks' }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `探測失敗（HTTP ${res.status}）`);
+    probedDisks = data.disks || [];
+    if (!probedDisks.length) {
+      list.style.display = 'none';
+      msg.style.color = '#e65100'; msg.textContent = '設備沒有回報任何固定磁碟。';
+      return;
+    }
+    const current = $('d-disk-filter').value;
+    list.innerHTML = probedDisks.map((d, i) => `
+      <label style="display:flex;gap:8px;align-items:center;margin:2px 0;cursor:pointer">
+        <input type="checkbox" data-idx="${i}" ${diskFilterMatches(current, d.mountPoint) ? 'checked' : ''} onchange="diskPicked()">
+        <span class="mono" style="flex:1">${esc(d.mountPoint)}</span>
+        <span style="color:#888;font-size:.8rem">${esc(fmtBytes(d.usedBytes))} / ${esc(fmtBytes(d.totalBytes))}（${d.usedPct.toFixed(1)}%）</span>
+      </label>`).join('');
+    list.style.display = '';
+    msg.textContent = `找到 ${probedDisks.length} 個磁碟，勾選要監控的項目（不勾選任何項目代表全部）。`;
+  } catch (e) {
+    list.style.display = 'none';
+    msg.style.color = '#c62828'; msg.textContent = e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = '探測磁碟';
+  }
+}
+
+// 勾選後更新輸入框：全部勾選或全部不勾 → 留空（監控全部），否則填入勾選的掛載點
+function diskPicked() {
+  const boxes = [...document.querySelectorAll('#d-disk-list input[type=checkbox]')];
+  const picked = boxes.filter(b => b.checked).map(b => probedDisks[b.dataset.idx].mountPoint);
+  $('d-disk-filter').value = picked.length === 0 || picked.length === boxes.length ? '' : picked.join(',');
+}
+
 function toggleV3Fields() {
   const v3 = $('d-version').value === '3';
   $('d-v3-fields').style.display      = v3 ? '' : 'none';
   $('d-community-row').style.display  = v3 ? 'none' : '';
 }
 
-async function saveDevice() {
+// 由對話框組出設備資料；欄位不合法時提示並回傳 null
+function collectDeviceBody() {
   const origName = $('d-id').value;
   const body = { name: $('d-name').value.trim(), host: $('d-host').value.trim(),
                  port: parseInt($('d-port').value), community: $('d-community').value.trim(),
                  retries: parseInt($('d-retries').value), timeoutMs: parseInt($('d-timeout').value),
                  enabled: $('d-enabled').checked, snmpVersion: $('d-version').value,
-                 profileId: $('d-profile').value === 'auto' ? null : Number($('d-profile').value) };
-  if (!body.name || !body.host) { alert('名稱和 IP 為必填'); return; }
+                 profileId: $('d-profile').value === 'auto' ? null : Number($('d-profile').value),
+                 diskFilter: $('d-disk-filter').value.trim() };
   if (body.snmpVersion === '3') {
     body.v3User         = $('d-v3-user').value.trim();
     body.v3AuthProtocol = $('d-v3-auth-proto').value;
     body.v3PrivProtocol = $('d-v3-priv-proto').value;
-    if (!body.v3User) { alert('SNMPv3 使用者名稱為必填'); return; }
+    if (!body.v3User) { alert('SNMPv3 使用者名稱為必填'); return null; }
     // 新增時空白代表不設定；編輯時空白代表沿用（不送出欄位）
     const authPass = $('d-v3-auth-pass').value, privPass = $('d-v3-priv-pass').value;
     if (authPass || !origName) body.v3AuthPassword = authPass;
     if (privPass || !origName) body.v3PrivPassword = privPass;
     if ($('d-v3-clear-priv').checked) body.v3PrivPassword = '';
   }
+  return body;
+}
+
+async function saveDevice() {
+  const origName = $('d-id').value;
+  const body = collectDeviceBody();
+  if (!body) return;
+  if (!body.name || !body.host) { alert('名稱和 IP 為必填'); return; }
   // 新增：POST /api/admin/devices；更新：POST /api/admin/devices/{name}
   const url = origName ? `/api/admin/devices/${encodeURIComponent(origName)}` : '/api/admin/devices';
   const res = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });

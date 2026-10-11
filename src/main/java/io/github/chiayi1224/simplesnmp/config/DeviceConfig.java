@@ -48,6 +48,7 @@ public class DeviceConfig {
     private final String                      v3PrivPassword;
     private final Long                        profileId;     // 手動指定的監控範本；null 代表依 sysObjectID 自動套用
     private final String                      sysObjectId;   // 最近一次輪詢取得的 sysObjectID；未知為 ""
+    private final String                      diskFilter;    // 只記錄符合的磁碟（見 DiskFilter）；"" 代表全部
 
     public DeviceConfig(String name, String host, String community) {
         this(name, host, 161, community, 2, 3000L);
@@ -73,6 +74,7 @@ public class DeviceConfig {
         this.v3PrivPassword = b.v3PrivPassword;
         this.profileId      = b.profileId;
         this.sysObjectId    = b.sysObjectId;
+        this.diskFilter     = b.diskFilter;
     }
 
     public String getName()      { return name; }
@@ -90,6 +92,7 @@ public class DeviceConfig {
     public String                    getV3PrivPassword() { return v3PrivPassword; }
     public Long                      getProfileId()      { return profileId; }
     public String                    getSysObjectId()    { return sysObjectId; }
+    public String                    getDiskFilter()     { return diskFilter; }
 
     /** 組成 SNMP4J 用的 address 字串 */
     public String getUdpAddress() {
@@ -112,6 +115,7 @@ public class DeviceConfig {
      */
     public String validate() {
         if (snmpVersion == null) return "snmpVersion 只能是 1、2c 或 3";
+        if (diskFilter.length() > DiskFilter.MAX_LENGTH) return "磁碟過濾條件過長（最多 " + DiskFilter.MAX_LENGTH + " 個字元）";
         if (snmpVersion != SnmpVersion.V3) return null;
 
         if (v3User == null || v3User.isBlank()) return "SNMPv3 設備必須設定使用者名稱";
@@ -151,6 +155,7 @@ public class DeviceConfig {
         private String                    v3PrivPassword = "";
         private Long                      profileId      = null;
         private String                    sysObjectId    = "";
+        private String                    diskFilter     = "";
 
         public Builder(String name, String host) { this.name = name; this.host = host; }
 
@@ -166,6 +171,7 @@ public class DeviceConfig {
         public Builder v3PrivPassword(String v)                  { this.v3PrivPassword = v; return this; }
         public Builder profileId(Long v)                         { this.profileId = v; return this; }
         public Builder sysObjectId(String v)                     { this.sysObjectId = v == null ? "" : v; return this; }
+        public Builder diskFilter(String v)                      { this.diskFilter = DiskFilter.normalize(v); return this; }
 
         public DeviceConfig build() { return new DeviceConfig(this); }
     }

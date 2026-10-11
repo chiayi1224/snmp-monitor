@@ -77,12 +77,12 @@ final class DeviceRepository {
         db.update("""
             INSERT INTO devices(name, host, port, community, retries, timeout_ms,
                                 snmp_version, v3_user, v3_auth_protocol, v3_auth_password,
-                                v3_priv_protocol, v3_priv_password, profile_id, enabled, created, updated)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)
+                                v3_priv_protocol, v3_priv_password, profile_id, disk_filter, enabled, created, updated)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)
             """,
             d.getName(), d.getHost(), d.getPort(), d.getCommunity(), d.getRetries(), d.getTimeoutMs(),
             d.getSnmpVersion().label(), nz(d.getV3User()), d.getV3AuthProtocol().name(), nz(d.getV3AuthPassword()),
-            d.getV3PrivProtocol().name(), nz(d.getV3PrivPassword()), d.getProfileId(), now, now);
+            d.getV3PrivProtocol().name(), nz(d.getV3PrivPassword()), d.getProfileId(), d.getDiskFilter(), now, now);
     }
 
     /** 依名稱更新設備；community 與 v3 密碼為 null 時沿用資料庫中的舊值 */
@@ -94,13 +94,14 @@ final class DeviceRepository {
                    v3_priv_protocol=?,
                    v3_priv_password=COALESCE(?, v3_priv_password),
                    profile_id=?,
+                   disk_filter=?,
                    updated=?
             WHERE name=?
             """,
             d.getHost(), d.getPort(), d.getCommunity(), Db.flag(enabled), d.getRetries(), d.getTimeoutMs(),
             d.getSnmpVersion().label(), nz(d.getV3User()), d.getV3AuthProtocol().name(),
             d.getV3AuthPassword(), d.getV3PrivProtocol().name(), d.getV3PrivPassword(),
-            d.getProfileId(), Db.now(), d.getName());
+            d.getProfileId(), d.getDiskFilter(), Db.now(), d.getName());
     }
 
     /** 輪詢時更新設備的 sysObjectID（未變動時不寫入） */
@@ -182,6 +183,7 @@ final class DeviceRepository {
         row.put("v3PrivConfigured", !rs.getString("v3_priv_password").isEmpty());
         row.put("profileId",        nullableLong(rs, "profile_id"));
         row.put("sysObjectId",      rs.getString("sys_object_id"));
+        row.put("diskFilter",       rs.getString("disk_filter"));
         row.put("status",    rs.getString("status"));
         row.put("lastSeen",  rs.getString("last_seen"));
         row.put("created",   rs.getString("created"));
@@ -203,6 +205,7 @@ final class DeviceRepository {
             .v3PrivPassword(rs.getString("v3_priv_password"))
             .profileId(nullableLong(rs, "profile_id"))
             .sysObjectId(rs.getString("sys_object_id"))
+            .diskFilter(rs.getString("disk_filter"))
             .build();
     }
 
