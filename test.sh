@@ -33,7 +33,9 @@ section() { echo -e "\n${BOLD}══ $* ══${RESET}"; }
 BASE="http://localhost:8080"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 JAR="${SCRIPT_DIR}/target/simplesnmp-1.0.0.jar"
-DB_FILE="${SCRIPT_DIR}/target/snmp_monitor.db"
+# 測試用 JAR 複製到暫存目錄執行：DB 與 logs 都在暫存目錄，不會動到 run.sh 使用的 target/snmp_monitor.db
+WORK_DIR=""
+DB_FILE=""
 COOKIE_JAR="/tmp/snmp-test-cookies.txt"
 cd "${SCRIPT_DIR}"
 
@@ -46,8 +48,10 @@ cleanup() {
       log "關閉伺服器 PID=$SERVER_PID"
       kill "$SERVER_PID" 2>/dev/null || true
       wait "$SERVER_PID" 2>/dev/null || true
-      rm -f "$DB_FILE"
+      [[ -n "$WORK_DIR" ]] && rm -rf "$WORK_DIR"
     fi
+  elif [[ -n "$WORK_DIR" && "$KEEP_SERVER" != "true" ]]; then
+    rm -rf "$WORK_DIR"
   fi
   rm -f "$COOKIE_JAR"
 }
@@ -122,10 +126,20 @@ fi
 # ═════════════════════════════════════════════════════════════════
 section "2. 啟動伺服器"
 # ═════════════════════════════════════════════════════════════════
-rm -f "$DB_FILE" "$COOKIE_JAR"
+rm -f "$COOKIE_JAR"
+
+# 8080 已有服務在執行（例如 run.sh 啟動的實例）時不可繼續，否則測試會打到正式資料
+if curl -s -o /dev/null --max-time 2 "${BASE}/login.html"; then
+  fail "${BASE} 已有服務在執行，請先停止後再測試（測試不會動到它的資料庫，但會與它搶用埠口）"
+  exit 1
+fi
+
+WORK_DIR="$(mktemp -d /tmp/snmp-monitor-test.XXXXXX)"
+cp "$JAR" "$WORK_DIR/simplesnmp.jar"
+DB_FILE="${WORK_DIR}/snmp_monitor.db"
 log "啟動伺服器（DB=$DB_FILE）..."
 
-java -jar "$JAR" > /tmp/snmp-monitor-test.log 2>&1 &
+( cd "$WORK_DIR" && exec java -jar simplesnmp.jar ) > /tmp/snmp-monitor-test.log 2>&1 &
 SERVER_PID=$!
 log "PID=$SERVER_PID，等待就緒（最多 20 秒）..."
 
