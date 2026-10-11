@@ -42,9 +42,11 @@
 ```bash
 git clone https://github.com/your-username/snmp-monitor.git
 cd snmp-monitor
-mvn package -q
-java -jar target/simplesnmp-1.0.0.jar
+./run.sh        # 編譯並啟動；資料放在 data/，啟動前自動備份
 ```
+
+也可以手動執行：`mvn package -q` 後 `java -Dsnmp.data.dir=data -jar target/simplesnmp-1.0.0.jar`。
+不指定 `snmp.data.dir` 時資料庫會建立在 JAR 所在目錄（`target/`），而 `mvn clean` 會清空 `target/`，請避免把資料留在那裡。
 
 `mvn package` 會一併編譯網頁介面（`frontend/`：下載 Node、`npm ci`、`vite build`），把編譯好的 JS／CSS 打包進 JAR 的 `static/`。部署的機器只需要 Java。
 
@@ -143,7 +145,26 @@ trap2sink 192.168.1.100:1162 trapUser
 - 「套用到其他設備」可把一台設備的閾值與連線中斷告警設定一次複製到多台設備。
 - 從舊版升級時，原本的全域閾值會轉成每台既有設備的 Critical 閾值（只執行一次）；之後新增的設備沒有閾值。
 
-### 資料保存期限與備份
+### 資料目錄、升級與備份
+
+資料庫（`snmp_monitor.db`）與 HTTPS keystore 放在**資料目錄**，依下列順序決定：
+
+1. 系統屬性 `-Dsnmp.data.dir=<目錄>`
+2. 環境變數 `SNMP_MONITOR_DATA_DIR`
+3. JAR 所在目錄（預設，與舊版相同）
+
+`run.sh` 使用專案下的 `data/`（不納入版控），與編譯輸出 `target/` 分開，執行 `mvn clean` 不會影響資料；舊版放在 `target/` 的資料會在第一次執行時自動搬過去。每次啟動前會把資料庫複製到 `data/backups/<時間>/`，保留最近 5 份（環境變數 `SNMP_MONITOR_BACKUP_KEEP` 可調整，`0` 代表不備份）。
+
+**升級不會清除資料：** 新版啟動時只會「新增」資料表與欄位，舊版設定的轉換各只執行一次，不會刪除既有資料；SQLite 的檔案格式也向下相容，函式庫升版不影響既有資料庫。正式環境建議把資料目錄放在程式目錄以外，升級步驟：
+
+1. 停止服務
+2. 備份資料目錄（或至少 `snmp_monitor.db`）
+3. 替換 JAR
+4. 以相同的資料目錄啟動（例如 `java -Dsnmp.data.dir=/var/lib/snmp-monitor -jar simplesnmp-1.0.0.jar`）
+
+若要退回舊版，用升級前的備份還原即可（新版寫入的告警描述等系統文字在舊版會顯示為 `@i18n:` 開頭的代碼）。
+
+### 資料保存期限
 
 系統每天清除超過保留天數的資料（啟動 5 分鐘後首次執行）。天數可在網頁「系統設定」分頁調整（0–36500 天），修改後下一次執行即生效：
 

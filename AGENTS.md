@@ -5,7 +5,7 @@
 
 ## 建置、測試與開發指令
 - `mvn clean compile`：編譯專案。
-- `mvn clean package`：打包成可執行 fat JAR（含前端建置；只改後端可加 `-Dskip.frontend=true`）。注意 `clean` 會刪除 `target/snmp_monitor.db`。
+- `mvn clean package`：打包成可執行 fat JAR（含前端建置；只改後端可加 `-Dskip.frontend=true`）。`./run.sh` 編譯並以 `data/` 為資料目錄啟動（`mvn clean` 不影響資料，啟動前自動備份）；直接執行 JAR 而未指定 `-Dsnmp.data.dir` 時資料庫會建在 `target/`，`clean` 會刪除它。
 - `cd frontend && npm run dev`：前端開發伺服器（5173，`/api` 代理到 8080）；`npm run test`：前端單元測試。
 - `java -jar target/simplesnmp-1.0.0.jar`：啟動本機服務。
 - `mvn test`：執行 JUnit 5 單元測試；`./test.sh --skip-build`：API 整合測試。

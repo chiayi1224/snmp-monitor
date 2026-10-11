@@ -3,6 +3,9 @@ target/
 *.jar
 *.war
 
+# 執行資料目錄（run.sh：資料庫、keystore 與備份）
+data/
+
 # SQLite DB（執行時產生，不要 commit）
 *.db
 *.db-shm

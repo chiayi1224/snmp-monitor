@@ -23,7 +23,7 @@ cd frontend && npm install && npm run dev
 
 `mvn package` 透過 frontend-maven-plugin 下載 Node（`frontend/node/`）、`npm ci`、`npm run build`（`vue-tsc` + `vite build`），結果 `frontend/dist/` 以 resource 打包進 JAR 的 `static/`；`npm run test`（Vitest）於 Maven `test` 階段執行。建置需要網路，執行時完全離線。
 
-**注意：** 使用者的實際資料庫在 `target/snmp_monitor.db`，`mvn clean` 會刪除它；需保留資料時用 `run.sh` 或不加 `clean`。
+**資料目錄：** 資料庫與 keystore 放在 `config.DataDirectory` 決定的目錄（`-Dsnmp.data.dir` → `SNMP_MONITOR_DATA_DIR` → JAR 所在目錄）。`run.sh` 使用 `data/`（不進版控、`mvn clean` 不影響），第一次執行時把舊版 `target/` 的資料搬過去，每次啟動前備份到 `data/backups/`（保留 5 份）。直接 `java -jar target/…` 而不指定資料目錄時，資料庫會建在 `target/`，`mvn clean` 會刪除它。
 
 ## 測試與 CI
 

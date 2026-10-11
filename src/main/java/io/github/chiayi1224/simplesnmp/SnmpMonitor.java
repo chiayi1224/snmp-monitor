@@ -1,5 +1,6 @@
 package io.github.chiayi1224.simplesnmp;
 
+import io.github.chiayi1224.simplesnmp.config.DataDirectory;
 import io.github.chiayi1224.simplesnmp.config.TrapOidMapping;
 import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
 import io.github.chiayi1224.simplesnmp.discovery.DiscoveryService;
@@ -13,6 +14,7 @@ import io.github.chiayi1224.simplesnmp.web.JettyServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
@@ -24,6 +26,8 @@ import java.util.List;
  * 修改後下一個 poll 週期（60秒）自動生效，不需要重啟。
  *
  * 第一次啟動時設備清單是空的，請先到管理頁面新增設備。
+ *
+ * 資料庫與 keystore 放在資料目錄（見 {@link DataDirectory}，預設為 JAR 所在目錄）。
  */
 public class SnmpMonitor {
 
@@ -32,12 +36,15 @@ public class SnmpMonitor {
     public static void main(String[] args) throws Exception {
 
         // ── 1. 儲存（設備清單也在這裡）────────────────────────────
-        // DB 放在 JAR 同一目錄，不受 JVM 工作目錄影響
+        // DB 放在資料目錄（預設為 JAR 同一目錄），不受 JVM 工作目錄影響
         Path jarDir = Paths.get(
             SnmpMonitor.class.getProtectionDomain()
                 .getCodeSource().getLocation().toURI()
         ).getParent();
-        String dbPath = jarDir.resolve("snmp_monitor.db").toString();
+        Path dataDir = DataDirectory.resolve(jarDir);
+        Files.createDirectories(dataDir);
+        log.info("Data directory: {}", dataDir);
+        String dbPath = dataDir.resolve("snmp_monitor.db").toString();
         MetricStore store = new MetricStore(dbPath);
 
         // ── 2. 從 DB 讀取設定 ─────────────────────────────────────
@@ -48,7 +55,7 @@ public class SnmpMonitor {
         int     httpsPort      = store.getSettingInt ("https_port",            8443);
         String  keystoreFile   = store.getSetting    ("keystore_path",         "keystore.jks");
         String  keystorePass   = store.getSetting    ("keystore_password",     "changeit");
-        Path    keystorePath   = jarDir.resolve(keystoreFile);
+        Path    keystorePath   = dataDir.resolve(keystoreFile);
         List<V3UserConfig> v3Users = store.loadEnabledV3Users();
 
         // ── 3. Poller（設備從 DB 動態讀取）───────────────────────
@@ -80,7 +87,7 @@ public class SnmpMonitor {
 
         // ── 7. 優雅關閉 ───────────────────────────────────────────
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            log.info("關閉中...");
+            log.info("Shutting down...");
             poller.stop();
             retention.stop();
             trapReceiver.stop();
@@ -90,9 +97,9 @@ public class SnmpMonitor {
             try { store.close(); } catch (Exception ignored) {}
         }));
 
-        log.info("SNMP Monitor 啟動完成");
-        log.info("管理頁面 → http://localhost:{}", webPort);
-        if (httpsEnabled) log.info("HTTPS 管理頁面 → https://localhost:{}", httpsPort);
+        log.info("SNMP Monitor started");
+        log.info("Web UI: http://localhost:{}", webPort);
+        if (httpsEnabled) log.info("HTTPS Web UI: https://localhost:{}", httpsPort);
         Thread.currentThread().join();
     }
 }
