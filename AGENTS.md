@@ -12,7 +12,7 @@
 執行後 Jetty 預設使用 `8080`，Trap 接收埠為 `1162`，資料持久化使用 SQLite。
 
 ## 程式風格與命名慣例
-沿用既有 Java 寫法：4 個空白縮排、每檔一個主要類別、package 維持在 `io.github.chiayi1224.simplesnmp` 之下。類別名稱使用 `PascalCase`，方法與欄位使用 `camelCase`，Servlet 類別請採明確命名，例如 `StatusServlet`、`AlertServlet`。依專案既有規範，註解、log 訊息與使用者可見文字請使用正體中文。專案目前未配置 formatter 或 lint，提交前請自行整理 imports 與基本排版。
+沿用既有 Java 寫法：4 個空白縮排、每檔一個主要類別、package 維持在 `io.github.chiayi1224.simplesnmp` 之下。類別名稱使用 `PascalCase`，方法與欄位使用 `camelCase`，Servlet 類別請採明確命名，例如 `StatusServlet`、`DeviceServlet`。註解、Javadoc 與使用者可見文字（API 錯誤訊息、告警描述、網頁文字）使用正體中文；log 輸出一律使用英文（既有的中文 log 在修改該檔案時一併改為英文）。專案目前未配置 formatter 或 lint，提交前請自行整理 imports 與基本排版。
 
 ## 測試指引
 測試採用 JUnit 5 + Mockito，放在 `src/test/java` 下對應的 package，檔名使用 `*Test`，例如 `ThresholdEngineTest`。提交前請執行 `mvn clean package` 與 `./test.sh --skip-build`；GitHub Actions 會在每個 PR 自動執行相同檢查。
