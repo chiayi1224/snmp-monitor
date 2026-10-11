@@ -21,7 +21,7 @@
 ## 4. 前端專案與建置
 
 - [x] 4.1 建立 `frontend/`（Vue 3、TypeScript、Naive UI、vue-i18n、vue-router、`@vicons/ionicons5`、Vite、Vitest），Vite 開發伺服器代理 `/api` 到 8080；`.gitignore` 加入建置產物；驗證：`npm run build` 與 `npm run test` 成功
-- [x] 4.2 `pom.xml` 整合 frontend-maven-plugin 與複製建置結果，支援 `skip.frontend`、`node.download.root`、`npm.registry` 屬性；CI 加入 npm 快取；驗證：`mvn -B clean package` 產出的 JAR 內含 `static/index.html` 與 `static/assets/`，`-Dskip.frontend=true` 時略過前端
+- [x] 4.2 `pom.xml` 整合 frontend-maven-plugin 與複製建置結果，支援 `skip.frontend`、`node.download.root`、`npm.registry` 屬性；CI 不需另外安裝 Node（npm 快取因推送權限需 `workflow` scope，另行補上）；驗證：`mvn -B clean package` 產出的 JAR 內含 `static/index.html` 與 `static/assets/`，`-Dskip.frontend=true` 時略過前端
 - [x] 4.3 新增離線檢查：掃描 `frontend/dist` 中指向外部主機的網址（排除 SVG 命名空間等非請求用途），列入前端測試；驗證：檢查通過，刻意加入外部網址時失敗
 - [x] 4.4 README 與 `CLAUDE.md` 更新：前端架構、開發與建置指令、離線建置（鏡像設定）、多語系架構與新增訊息的方式；驗證：依 README 指令可完成前端開發伺服器啟動與完整建置
 
@@ -44,6 +44,6 @@
 
 ## 7. 整合檢查
 
-- [ ] 7.1 `mvn -B clean verify` 與 `./test.sh --skip-build` 全數通過，CI 綠燈
+- [x] 7.1 `mvn -B clean verify` 與 `./test.sh --skip-build` 全數通過，CI 綠燈
 - [x] 7.2 離線實測：瀏覽器只允許連到本系統（封鎖所有外部網域），走過登入與每個功能頁，確認功能正常且沒有被封鎖的外部請求
 - [x] 7.3 三語實測：分別以正體中文、簡體中文、英文走過每個功能頁，畫面上沒有其他語言的固定文字（使用者資料除外），並觸發一個後端錯誤確認訊息語言一致；附三種語言的截圖
