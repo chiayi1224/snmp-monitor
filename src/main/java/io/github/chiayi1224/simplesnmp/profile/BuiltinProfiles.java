@@ -1,5 +1,7 @@
 package io.github.chiayi1224.simplesnmp.profile;
 
+import io.github.chiayi1224.simplesnmp.i18n.Messages;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.config.OidConstants;
 
 import java.util.List;
@@ -25,7 +27,7 @@ public final class BuiltinProfiles {
 
     /** 與升級前寫死的 Poller 邏輯完全相同（ssCpuIdle、UCD 記憶體公式、hrStorage 固定磁碟） */
     public static MetricProfile netSnmp() {
-        return new MetricProfile(null, NET_SNMP, "Linux / Unix 的 Net-SNMP agent（UCD-SNMP-MIB）",
+        return new MetricProfile(null, NET_SNMP, seedDescription(NET_SNMP),
             "1.3.6.1.4.1.8072", true, List.of(
                 new ProfileMetric(ProfileMetric.CPU, MetricKind.HUNDRED_MINUS, Map.of("oid", OidConstants.CPU_IDLE), "%", true),
                 new ProfileMetric(ProfileMetric.MEMORY, MetricKind.UCD_MEMORY, Map.of(), "%", true),
@@ -34,7 +36,7 @@ public final class BuiltinProfiles {
 
     /** 沒有其他範本符合時的預設（HOST-RESOURCES-MIB，多數作業系統與部分網路設備支援） */
     public static MetricProfile hostResources() {
-        return new MetricProfile(null, HOST_RESOURCES, "沒有其他範本符合時的預設，使用 HOST-RESOURCES-MIB",
+        return new MetricProfile(null, HOST_RESOURCES, seedDescription(HOST_RESOURCES),
             "", true, List.of(
                 new ProfileMetric(ProfileMetric.CPU, MetricKind.TABLE_AVERAGE, Map.of("column", HR_PROCESSOR_LOAD), "%", true),
                 new ProfileMetric(ProfileMetric.MEMORY, MetricKind.STORAGE_TABLE,
@@ -44,11 +46,37 @@ public final class BuiltinProfiles {
 
     /** Cisco IOS：CISCO-PROCESS-MIB 5 分鐘平均 CPU、CISCO-MEMORY-POOL-MIB processor pool */
     public static MetricProfile ciscoIos() {
-        return new MetricProfile(null, CISCO_IOS, "Cisco IOS 路由器與交換器",
+        return new MetricProfile(null, CISCO_IOS, seedDescription(CISCO_IOS),
             "1.3.6.1.4.1.9", true, List.of(
                 new ProfileMetric(ProfileMetric.CPU, MetricKind.TABLE_AVERAGE, Map.of("column", CISCO_CPU_5MIN_REV), "%", true),
                 new ProfileMetric(ProfileMetric.MEMORY, MetricKind.USED_FREE_PERCENT,
                     Map.of("used", CISCO_MEM_POOL_USED_1, "free", CISCO_MEM_POOL_FREE_1), "%", true)));
+    }
+
+    /** 內建範本的識別名稱 → 訊息代碼用的鍵（名稱是資料庫中的識別值，不可變更） */
+    private static final Map<String, String> KEYS = Map.of(
+        NET_SNMP, "net_snmp", HOST_RESOURCES, "host_resources", CISCO_IOS, "cisco_ios");
+
+    /** 內建範本名稱對應的鍵；不是內建範本回傳 null */
+    public static String keyOf(String name) {
+        return KEYS.get(name);
+    }
+
+    /** 顯示名稱：內建範本依目前請求語系翻譯，其他範本為原名稱 */
+    public static String displayName(MetricProfile p) {
+        String key = p.builtin() ? keyOf(p.name()) : null;
+        return key == null ? p.name() : Messages.get(Msg.of("profile.builtin." + key + ".name"));
+    }
+
+    /** 顯示說明：內建範本依目前請求語系翻譯，其他範本為原說明 */
+    public static String displayDescription(MetricProfile p) {
+        String key = p.builtin() ? keyOf(p.name()) : null;
+        return key == null ? p.description() : Messages.get(Msg.of("profile.builtin." + key + ".description"));
+    }
+
+    /** 寫入資料庫的說明：正體中文 */
+    private static String seedDescription(String name) {
+        return Messages.get(Msg.of("profile.builtin." + KEYS.get(name) + ".description"), Messages.ZH_TW);
     }
 
     public static List<MetricProfile> all() {

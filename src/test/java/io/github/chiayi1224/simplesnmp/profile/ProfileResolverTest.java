@@ -84,7 +84,7 @@ class ProfileResolverTest {
     void 驗證_指標名稱不合法() {
         MetricProfile p = new MetricProfile(null, "X", "", "", false,
             List.of(metric("CPU Temp", MetricKind.VALUE, Map.of("oid", "1.1"))));
-        assertTrue(p.validate().contains("不合法"));
+        assertTrue(p.validate().text().contains("不合法"));
     }
 
     @Test
@@ -92,21 +92,21 @@ class ProfileResolverTest {
         MetricProfile p = new MetricProfile(null, "X", "", "", false, List.of(
             metric("cpu", MetricKind.VALUE, Map.of("oid", "1.1")),
             metric("cpu", MetricKind.VALUE, Map.of("oid", "1.2"))));
-        assertTrue(p.validate().contains("重複"));
+        assertTrue(p.validate().text().contains("重複"));
     }
 
     @Test
     void 驗證_不支援的計算類型() {
         MetricProfile p = new MetricProfile(null, "X", "", "", false,
             List.of(metric("temp", MetricKind.parse("EXPRESSION"), Map.of())));
-        assertTrue(p.validate().contains("不支援"));
+        assertTrue(p.validate().text().contains("不支援"));
     }
 
     @Test
     void 驗證_缺少必要OID() {
         MetricProfile p = new MetricProfile(null, "X", "", "", false,
             List.of(metric("memory", MetricKind.USED_TOTAL_PERCENT, Map.of("used", "1.1"))));
-        assertTrue(p.validate().contains("total"));
+        assertTrue(p.validate().text().contains("total"));
     }
 
     @Test

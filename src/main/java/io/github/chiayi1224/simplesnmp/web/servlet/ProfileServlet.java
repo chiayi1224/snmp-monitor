@@ -1,5 +1,8 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
+import io.github.chiayi1224.simplesnmp.profile.BuiltinProfiles;
+import io.github.chiayi1224.simplesnmp.i18n.Messages;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.config.DiskFilter;
@@ -72,10 +75,10 @@ public class ProfileServlet extends BaseJsonServlet {
                 return;
             }
             MetricProfile p = store.loadProfile(parseId(path));
-            if (p == null) { writeError(resp, 404, "找不到範本：" + path); return; }
+            if (p == null) { writeError(resp, 404, Msg.of("profile.not_found_id", path)); return; }
             writeJson(resp, toJson(p, counts));
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -89,9 +92,9 @@ public class ProfileServlet extends BaseJsonServlet {
             if ("preview".equals(path)) { preview(req, resp); return; }
             String[] parts = path.split("/");
             if (parts.length == 2 && "copy".equals(parts[1])) { copy(parseId(parts[0]), resp); return; }
-            writeError(resp, 404, "找不到路徑");
+            writeError(resp, 404, Msg.of("request.path_not_found"));
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -101,24 +104,24 @@ public class ProfileServlet extends BaseJsonServlet {
         JsonNode body = parseBody(req, resp);
         if (body == null) return;
         String deviceName = body.path("deviceName").asText("").trim();
-        if (deviceName.isEmpty()) { writeError(resp, 400, "請指定 deviceName"); return; }
+        if (deviceName.isEmpty()) { writeError(resp, 400, Msg.of("request.field_required", "deviceName")); return; }
         DeviceConfig device = store.loadDevice(deviceName);
-        if (device == null) { writeError(resp, 404, "找不到設備：" + deviceName); return; }
+        if (device == null) { writeError(resp, 404, Msg.of("device.not_found", deviceName)); return; }
 
         MetricProfile profile;
         if (body.hasNonNull("profileId")) {
             profile = store.loadProfile(body.path("profileId").asLong());
-            if (profile == null) { writeError(resp, 404, "找不到範本 #" + body.path("profileId").asText()); return; }
+            if (profile == null) { writeError(resp, 404, Msg.of("profile.not_found_id", body.path("profileId").asText())); return; }
         } else if (body.path("profile").isObject()) {
             profile = parseProfile(body.path("profile"), null);
-            if (profile.name().isEmpty()) profile = new MetricProfile(null, "（預覽）", "", profile.matchPrefix(), false, profile.metrics());
-            String error = profile.validate();
+            if (profile.name().isEmpty()) profile = new MetricProfile(null, t("profile.preview_name"), "", profile.matchPrefix(), false, profile.metrics());
+            Msg error = profile.validate();
             if (error != null) { writeError(resp, 400, error); return; }
         } else {
-            writeError(resp, 400, "請指定 profileId 或 profile");
+            writeError(resp, 400, Msg.of("profile.preview_target_required"));
             return;
         }
-        if (collector == null) { writeError(resp, 503, "預覽功能未啟用"); return; }
+        if (collector == null) { writeError(resp, 503, Msg.of("profile.preview_disabled")); return; }
 
         // 停用的指標也試算，方便啟用前確認
         List<ProfileMetric> all = new ArrayList<>();
@@ -130,7 +133,7 @@ public class ProfileServlet extends BaseJsonServlet {
         try {
             results = ProfileCollector.calculate(trial, collector.fetch(device, trial), DiskFilter.parse(device.getDiskFilter()));
         } catch (SnmpException e) {
-            writeError(resp, 502, "設備無法查詢：" + e.getMessage());
+            writeError(resp, 502, Msg.of("device.query_failed", e.msg()));
             return;
         }
 
@@ -155,7 +158,7 @@ public class ProfileServlet extends BaseJsonServlet {
                 }
                 x.put("values", values);
             } else {
-                x.put("error", r.error());
+                x.put("error", Messages.get(r.error()));
             }
             out.add(x);
         }
@@ -170,25 +173,27 @@ public class ProfileServlet extends BaseJsonServlet {
         JsonNode body = parseBody(req, resp);
         if (body == null) return;
         MetricProfile p = parseProfile(body, null);
-        String error = p.validate();
+        Msg error = p.validate();
         if (error != null) { writeError(resp, 400, error); return; }
-        if (store.profileNameExists(p.name(), -1)) { writeError(resp, 409, "範本名稱已存在：" + p.name()); return; }
+        if (store.profileNameExists(p.name(), -1)) { writeError(resp, 409, Msg.of("profile.name_exists", p.name())); return; }
 
         long id = store.createProfile(p);
         resp.setStatus(201);
-        writeJson(resp, Map.of("message", "新增成功", "id", id));
+        writeJson(resp, Map.of("message", t("common.created"), "id", id));
     }
 
     private void copy(long id, HttpServletResponse resp) throws Exception {
         MetricProfile src = store.loadProfile(id);
-        if (src == null) { writeError(resp, 404, "找不到範本 #" + id); return; }
+        if (src == null) { writeError(resp, 404, Msg.of("profile.not_found_id", String.valueOf(id))); return; }
 
-        String name = src.name() + "（複本）";
-        for (int n = 2; store.profileNameExists(name, -1); n++) name = src.name() + "（複本 " + n + "）";
-        long newId = store.createProfile(new MetricProfile(null, name, src.description(), src.matchPrefix(),
+        // 複本以目前語系的顯示名稱與說明為基礎（內建範本會翻譯，自訂範本即原名稱）
+        String base = BuiltinProfiles.displayName(src);
+        String name = t("profile.copy_name", base);
+        for (int n = 2; store.profileNameExists(name, -1); n++) name = t("profile.copy_name_n", base, String.valueOf(n));
+        long newId = store.createProfile(new MetricProfile(null, name, BuiltinProfiles.displayDescription(src), src.matchPrefix(),
             false, src.metrics()));
         resp.setStatus(201);
-        writeJson(resp, Map.of("message", "複製成功", "id", newId, "name", name));
+        writeJson(resp, Map.of("message", t("profile.copied"), "id", newId, "name", name));
     }
 
     // ─── PUT / DELETE ─────────────────────────────────────────────
@@ -198,20 +203,20 @@ public class ProfileServlet extends BaseJsonServlet {
         try {
             long id = pathId(req);
             MetricProfile existing = id < 0 ? null : store.loadProfile(id);
-            if (existing == null) { writeError(resp, 404, "找不到範本"); return; }
-            if (existing.builtin()) { writeError(resp, 403, "內建範本不可修改，請先複製再編輯"); return; }
+            if (existing == null) { writeError(resp, 404, Msg.of("profile.not_found")); return; }
+            if (existing.builtin()) { writeError(resp, 403, Msg.of("profile.builtin_readonly")); return; }
 
             JsonNode body = parseBody(req, resp);
             if (body == null) return;
             MetricProfile p = parseProfile(body, id);
-            String error = p.validate();
+            Msg error = p.validate();
             if (error != null) { writeError(resp, 400, error); return; }
-            if (store.profileNameExists(p.name(), id)) { writeError(resp, 409, "範本名稱已存在：" + p.name()); return; }
+            if (store.profileNameExists(p.name(), id)) { writeError(resp, 409, Msg.of("profile.name_exists", p.name())); return; }
 
             store.updateProfile(id, p);
-            writeJson(resp, Map.of("message", "更新成功", "id", id));
+            writeJson(resp, Map.of("message", t("common.updated"), "id", id));
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -220,13 +225,13 @@ public class ProfileServlet extends BaseJsonServlet {
         try {
             long id = pathId(req);
             MetricProfile existing = id < 0 ? null : store.loadProfile(id);
-            if (existing == null) { writeError(resp, 404, "找不到範本"); return; }
-            if (existing.builtin()) { writeError(resp, 403, "內建範本不可刪除"); return; }
+            if (existing == null) { writeError(resp, 404, Msg.of("profile.not_found")); return; }
+            if (existing.builtin()) { writeError(resp, 403, Msg.of("profile.builtin_undeletable")); return; }
 
             store.deleteProfile(id);
-            writeJson(resp, Map.of("message", "刪除成功", "id", id));
+            writeJson(resp, Map.of("message", t("common.deleted"), "id", id));
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -257,6 +262,8 @@ public class ProfileServlet extends BaseJsonServlet {
         m.put("id",          p.id());
         m.put("name",        p.name());
         m.put("description", p.description());
+        m.put("displayName",        BuiltinProfiles.displayName(p));
+        m.put("displayDescription", BuiltinProfiles.displayDescription(p));
         m.put("matchPrefix", p.matchPrefix());
         m.put("builtin",     p.builtin());
         m.put("deviceCount", deviceCounts.getOrDefault(p.id(), 0L));

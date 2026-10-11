@@ -1,5 +1,9 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import io.github.chiayi1224.simplesnmp.i18n.StoredText;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.github.chiayi1224.simplesnmp.discovery.DiscoveryService;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
@@ -40,7 +44,7 @@ public class DiscoveryServlet extends BaseJsonServlet {
 
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        if (!"scans".equals(pathName(req))) { writeError(resp, 404, "找不到路徑"); return; }
+        if (!"scans".equals(pathName(req))) { writeError(resp, 404, Msg.of("request.path_not_found")); return; }
         try {
             JsonNode body = parseBody(req, resp);
             if (body == null) return;
@@ -52,7 +56,7 @@ public class DiscoveryServlet extends BaseJsonServlet {
                 String oid = n.asText().trim();
                 if (oid.isEmpty()) continue;
                 if (!OID_PATTERN.matcher(oid).matches()) {
-                    writeError(resp, 400, "子樹 OID 格式不正確：" + oid);
+                    writeError(resp, 400, Msg.of("scan.subtree_invalid", oid));
                     return;
                 }
                 subtrees.add(oid);
@@ -61,7 +65,7 @@ public class DiscoveryServlet extends BaseJsonServlet {
             DiscoveryService.StartResult r = discovery.start(deviceName, optBool(body, "walk", false), subtrees);
             if (r.alreadyRunning()) {
                 resp.setStatus(409);
-                writeJson(resp, Map.of("error", "此設備已有進行中的掃描", "scanId", r.scanId()));
+                writeJson(resp, Map.of("error", t("scan.already_running"), "scanId", r.scanId()));
                 return;
             }
             resp.setStatus(202);
@@ -69,7 +73,7 @@ public class DiscoveryServlet extends BaseJsonServlet {
         } catch (DiscoveryService.DeviceNotFoundException e) {
             writeError(resp, 404, e.getMessage());
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -79,39 +83,68 @@ public class DiscoveryServlet extends BaseJsonServlet {
             String path = pathName(req);
             if ("scans".equals(path)) {
                 String device = req.getParameter("device");
-                writeJson(resp, store.queryScans(device == null || device.isBlank() ? null : device));
+                List<Map<String, Object>> scans = new ArrayList<>();
+                for (Map<String, Object> s : store.queryScans(device == null || device.isBlank() ? null : device)) {
+                    Map<String, Object> copy = new LinkedHashMap<>(s);
+                    localizeScan(copy);
+                    scans.add(copy);
+                }
+                writeJson(resp, scans);
                 return;
             }
-            if (path == null || !path.startsWith("scans/")) { writeError(resp, 404, "找不到路徑"); return; }
+            if (path == null || !path.startsWith("scans/")) { writeError(resp, 404, Msg.of("request.path_not_found")); return; }
 
             String[] parts = path.substring("scans/".length()).split("/");
             long id = parseId(parts[0]);
             if (id < 0 || parts.length > 2 || (parts.length == 2 && !"oids".equals(parts[1]))) {
-                writeError(resp, 404, "找不到路徑");
+                writeError(resp, 404, Msg.of("request.path_not_found"));
                 return;
             }
             Map<String, Object> scan = store.queryScan(id);
-            if (scan == null) { writeError(resp, 404, "找不到掃描 #" + id); return; }
+            if (scan == null) { writeError(resp, 404, Msg.of("scan.not_found", String.valueOf(id))); return; }
 
             if (parts.length == 1) writeScan(resp, scan);
             else writeOids(req, resp, id);
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
     private void writeScan(HttpServletResponse resp, Map<String, Object> scan) throws IOException {
         Map<String, Object> out = new LinkedHashMap<>(scan);
+        localizeScan(out);
         Object raw = out.remove("probesJson");
-        out.put("probes", raw == null ? List.of() : JSON.readTree(raw.toString()));
+        JsonNode probes = raw == null ? JSON.createArrayNode() : JSON.readTree(raw.toString());
+        for (JsonNode p : probes) {
+            if (!(p instanceof ObjectNode o)) continue;
+            localizeField(o, "name");
+            localizeField(o, "error");
+            if (o.get("samples") instanceof ArrayNode samples) {
+                for (int i = 0; i < samples.size(); i++) {
+                    if (samples.get(i).isTextual()) samples.set(i, StoredText.localize(samples.get(i).asText()));
+                }
+            }
+        }
+        out.put("probes", probes);
         writeJson(resp, out);
+    }
+
+    /** 掃描的進度與錯誤：系統產生的文字依請求語系翻譯 */
+    private static void localizeScan(Map<String, Object> scan) {
+        for (String f : List.of("progress", "error")) {
+            if (scan.get(f) instanceof String s) scan.put(f, StoredText.localize(s));
+        }
+    }
+
+    private static void localizeField(ObjectNode o, String field) {
+        if (o.get(field) != null && o.get(field).isTextual()) o.put(field, StoredText.localize(o.get(field).asText()));
     }
 
     private void writeOids(HttpServletRequest req, HttpServletResponse resp, long id) throws IOException {
         String prefix = blankToNull(req.getParameter("prefix"));
         if (prefix != null) {
             prefix = prefix.replaceAll("^\\.+|\\.+$", "");
-            if (!OID_PATTERN.matcher(prefix).matches()) { writeError(resp, 400, "OID 前綴格式不正確"); return; }
+            if (!OID_PATTERN.matcher(prefix).matches()) { writeError(resp, 400, Msg.of("scan.prefix_invalid")); return; }
         }
         int offset = Math.max(0, intParam(req, "offset", 0));
         int limit  = Math.min(MAX_LIMIT, Math.max(1, intParam(req, "limit", DEFAULT_LIMIT)));

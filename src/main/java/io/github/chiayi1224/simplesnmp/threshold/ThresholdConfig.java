@@ -1,5 +1,6 @@
 package io.github.chiayi1224.simplesnmp.threshold;
 
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 /**
  * 單一設備單一指標的閾值設定：Warning／Critical 兩段觸發值（至少一個）與共用的恢復寬度。
  *
@@ -85,23 +86,23 @@ public class ThresholdConfig {
     }
 
     /** 合法回傳 null，否則回傳錯誤訊息（不檢查指標名稱本身是否合法） */
-    public static String validate(String metricName, Direction direction, Double warning, Double critical,
+    public static Msg validate(String metricName, Direction direction, Double warning, Double critical,
                                   double rearmMargin, int triggerCount, int rearmCount) {
-        if (direction == null) return "direction 只能是 HIGH 或 LOW";
-        if (warning == null && critical == null) return "Warning 與 Critical 至少要設定一個";
+        if (direction == null) return Msg.of("threshold.direction_invalid");
+        if (warning == null && critical == null) return Msg.of("threshold.level_required");
         if ((warning != null && !Double.isFinite(warning)) || (critical != null && !Double.isFinite(critical))) {
-            return "Warning 與 Critical 必須是數字";
+            return Msg.of("threshold.level_not_number");
         }
         if (isPercentMetric(metricName)) {
-            if (direction != Direction.HIGH) return "指標 " + metricName + " 的方向固定為 HIGH";
-            if (outOfPercent(warning) || outOfPercent(critical)) return "指標 " + metricName + " 的觸發值應在 0（不含）到 100 之間";
+            if (direction != Direction.HIGH) return Msg.of("threshold.direction_fixed", metricName);
+            if (outOfPercent(warning) || outOfPercent(critical)) return Msg.of("threshold.percent_range", metricName);
         }
         if (warning != null && critical != null) {
-            if (direction == Direction.HIGH && warning >= critical) return "方向為 HIGH 時 Warning 必須小於 Critical";
-            if (direction == Direction.LOW && warning <= critical) return "方向為 LOW 時 Warning 必須大於 Critical";
+            if (direction == Direction.HIGH && warning >= critical) return Msg.of("threshold.warning_below_critical");
+            if (direction == Direction.LOW && warning <= critical) return Msg.of("threshold.warning_above_critical");
         }
-        if (!Double.isFinite(rearmMargin) || rearmMargin < 0) return "恢復寬度不可小於 0";
-        if (triggerCount < 1 || rearmCount < 1) return "連續次數至少為 1";
+        if (!Double.isFinite(rearmMargin) || rearmMargin < 0) return Msg.of("threshold.margin_negative");
+        if (triggerCount < 1 || rearmCount < 1) return Msg.of("threshold.count_invalid");
         return null;
     }
 

@@ -115,7 +115,7 @@ class DeviceConfigTest {
 
     @Test
     void 驗證_v3只有加密沒有認證() {
-        assertTrue(v3("", "privPass1").build().validate().contains("認證"));
+        assertTrue(v3("", "privPass1").build().validate().text().contains("認證"));
     }
 
     @Test

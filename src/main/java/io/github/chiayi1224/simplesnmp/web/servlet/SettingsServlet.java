@@ -1,5 +1,7 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
+import io.github.chiayi1224.simplesnmp.i18n.Messages;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.servlet.http.HttpServletRequest;
@@ -36,7 +38,7 @@ public class SettingsServlet extends BaseJsonServlet {
     static final java.util.Set<String> BOOLEAN_KEYS = java.util.Set.of("ping_enabled", "https_enabled");
 
     /** 系統內部使用的標記，不在 API 顯示也不可修改 */
-    static final java.util.Set<String> INTERNAL_KEYS = java.util.Set.of("poll_oids_migrated");
+    static final java.util.Set<String> INTERNAL_KEYS = java.util.Set.of("poll_oids_migrated", "thresholds_migrated");
 
     private final MetricStore store;
 
@@ -49,46 +51,56 @@ public class SettingsServlet extends BaseJsonServlet {
         try {
             Map<String, Object> settings = new java.util.LinkedHashMap<>(store.queryAllSettings());
             settings.keySet().removeAll(INTERNAL_KEYS);
+            // 說明依請求語系翻譯（設定鍵沒有對應訊息時用資料庫中的原文）
+            for (Map.Entry<String, Object> e : settings.entrySet()) {
+                if (e.getValue() instanceof Map<?, ?> row) {
+                    Map<String, Object> copy = new java.util.LinkedHashMap<>();
+                    row.forEach((k, v) -> copy.put(String.valueOf(k), v));
+                    Msg desc = Msg.of("setting." + e.getKey() + ".description");
+                    if (Messages.has(desc.key())) copy.put("description", Messages.get(desc));
+                    e.setValue(copy);
+                }
+            }
             writeJson(resp, settings);
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
     @Override
     protected void doPut(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         String key = pathName(req);
-        if (key == null) { writeError(resp, 400, "請指定 key"); return; }
+        if (key == null) { writeError(resp, 400, Msg.of("request.field_required", "key")); return; }
         try {
             JsonNode body = parseBody(req, resp);
             if (body == null) return;
             String value = body.path("value").asText("").strip();
-            if (value.isBlank()) { writeError(resp, 400, "value 不可為空"); return; }
-            if (INTERNAL_KEYS.contains(key) || !store.queryAllSettings().containsKey(key)) { writeError(resp, 404, "找不到設定：" + key); return; }
-            String error = validate(key, value);
+            if (value.isBlank()) { writeError(resp, 400, Msg.of("request.field_required", "value")); return; }
+            if (INTERNAL_KEYS.contains(key) || !store.queryAllSettings().containsKey(key)) { writeError(resp, 404, Msg.of("setting.not_found", key)); return; }
+            Msg error = validate(key, value);
             if (error != null) { writeError(resp, 400, error); return; }
             store.upsertSetting(key, value, "");
-            writeJson(resp, Map.of("message", "設定已更新，部分設定需重啟才生效"));
+            writeJson(resp, Map.of("message", t("setting.updated")));
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
     /** 檢查已知 key 的值；合法回傳 null，否則回傳錯誤訊息 */
-    static String validate(String key, String value) {
+    static Msg validate(String key, String value) {
         int[] range = INT_RANGES.get(key);
         if (range != null) {
             try {
                 int v = Integer.parseInt(value);
                 if (v < range[0] || v > range[1]) {
-                    return key + " 必須介於 " + range[0] + " 到 " + range[1] + " 之間";
+                    return Msg.of("setting.out_of_range", key, String.valueOf(range[0]), String.valueOf(range[1]));
                 }
             } catch (NumberFormatException e) {
-                return key + " 必須是整數";
+                return Msg.of("setting.not_integer", key);
             }
         }
         if (BOOLEAN_KEYS.contains(key) && !value.equals("true") && !value.equals("false")) {
-            return key + " 只能是 true 或 false";
+            return Msg.of("setting.not_boolean", key);
         }
         return null;
     }

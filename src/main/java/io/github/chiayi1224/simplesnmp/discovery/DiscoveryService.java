@@ -1,5 +1,9 @@
 package io.github.chiayi1224.simplesnmp.discovery;
 
+import io.github.chiayi1224.simplesnmp.i18n.Localized;
+import io.github.chiayi1224.simplesnmp.i18n.LocalizedException;
+import io.github.chiayi1224.simplesnmp.i18n.StoredText;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.config.OidConstants;
@@ -56,8 +60,8 @@ public class DiscoveryService implements Closeable {
     public record StartResult(long scanId, boolean alreadyRunning) {}
 
     /** 設備不存在 */
-    public static class DeviceNotFoundException extends Exception {
-        public DeviceNotFoundException(String name) { super("找不到設備：" + name); }
+    public static class DeviceNotFoundException extends LocalizedException {
+        public DeviceNotFoundException(String name) { super(Msg.of("device.not_found", name)); }
     }
 
     private final MetricStore     store;
@@ -102,7 +106,7 @@ public class DiscoveryService implements Closeable {
                 running.remove(deviceName);
             }
         });
-        log.info("[{}] 開始 OID 掃描 #{}（walk={}）", deviceName, scanId, walk);
+        log.info("[{}] OID scan #{} started (walk={})", deviceName, scanId, walk);
         return new StartResult(scanId, false);
     }
 
@@ -117,12 +121,12 @@ public class DiscoveryService implements Closeable {
         long deadline = System.currentTimeMillis() + limits.maxMillis();
         try {
             // ① 系統資訊（同時確認設備可連線）
-            store.updateScanProgress(scanId, "讀取系統資訊");
+            store.updateScanProgress(scanId, StoredText.encode(Msg.of("scan.progress.sysinfo")));
             Map<String, Variable> sys;
             try {
                 sys = session.get(device, List.of(SYS_DESCR, SYS_OBJECT_ID, SYS_NAME, SYS_UPTIME));
             } catch (IOException e) {
-                finish(scanId, device, "FAILED", e.getMessage(), false);
+                finish(scanId, device, "FAILED", errorText(e), false);
                 return;
             }
             String objectId = str(sys.get(SYS_OBJECT_ID));
@@ -130,7 +134,7 @@ public class DiscoveryService implements Closeable {
                 str(sys.get(SYS_UPTIME)), VendorRegistry.identify(objectId));
 
             // ② 常見 MIB 探測
-            store.updateScanProgress(scanId, "探測常見 MIB");
+            store.updateScanProgress(scanId, StoredText.encode(Msg.of("scan.progress.probes")));
             store.saveScanProbes(scanId, JSON.writeValueAsString(MibProbes.runAll(session, device)));
 
             // ③ 走訪子樹
@@ -143,24 +147,24 @@ public class DiscoveryService implements Closeable {
                         truncated = true;
                         break;
                     }
-                    store.updateScanProgress(scanId, "走訪 " + root + "（已收集 " + collected + " 筆）");
+                    store.updateScanProgress(scanId, StoredText.encode(Msg.of("scan.progress.walk", root, String.valueOf(collected))));
                     SnmpSession.WalkResult r;
                     try {
                         r = session.walk(device, root, limits.maxOids() - collected, deadline);
                     } catch (IOException e) {
-                        error = "走訪 " + root + " 失敗：" + e.getMessage();
+                        error = StoredText.encode(Msg.of("scan.walk_failed", root, reason(e)));
                         break;
                     }
                     writeResults(scanId, r.rows());
                     collected += r.rows().size();
                     if (r.truncated()) truncated = true;
-                    if (r.error() != null) { error = "走訪 " + root + " 中斷：" + r.error(); break; }
+                    if (r.error() != null) { error = StoredText.encode(Msg.of("scan.walk_interrupted", root, r.error())); break; }
                 }
             }
             finish(scanId, device, error == null ? "COMPLETED" : "FAILED", error, truncated);
         } catch (Exception e) {
-            log.error("[{}] 掃描 #{} 發生錯誤", device.getName(), scanId, e);
-            finish(scanId, device, "FAILED", "內部錯誤：" + e.getMessage(), false);
+            log.error("[{}] OID scan #{} failed with an internal error", device.getName(), scanId, e);
+            finish(scanId, device, "FAILED", StoredText.encode(Msg.of("scan.internal_error", String.valueOf(e.getMessage()))), false);
         }
     }
 
@@ -194,11 +198,27 @@ public class DiscoveryService implements Closeable {
         try {
             store.finishScan(scanId, status, error, truncated);
             store.pruneScans(device.getName(), KEEP_SCANS);
-            log.info("[{}] OID 掃描 #{} 結束：{}{}{}", device.getName(), scanId, status,
-                truncated ? "（已截斷）" : "", error != null ? "，" + error : "");
+            log.info("[{}] OID scan #{} finished: {}{}{}", device.getName(), scanId, status,
+                truncated ? " (truncated)" : "", error != null ? ", " + englishText(error) : "");
         } catch (java.sql.SQLException e) {
-            log.error("[{}] 寫入掃描結果失敗: {}", device.getName(), e.getMessage());
+            log.error("[{}] Failed to save scan result: {}", device.getName(), e.getMessage());
         }
+    }
+
+    /** 例外的使用者訊息（SnmpException 等帶訊息代碼者），否則為原始訊息 */
+    private static Object reason(Exception e) {
+        return e instanceof Localized l ? l.msg() : String.valueOf(e.getMessage());
+    }
+
+    /** 保存用的錯誤文字 */
+    private static String errorText(Exception e) {
+        return e instanceof Localized l ? StoredText.encode(l.msg()) : String.valueOf(e.getMessage());
+    }
+
+    /** log 用：編碼文字轉成英文 */
+    private static String englishText(String stored) {
+        Msg msg = StoredText.decode(stored);
+        return msg == null ? stored : io.github.chiayi1224.simplesnmp.i18n.Messages.get(msg, io.github.chiayi1224.simplesnmp.i18n.Messages.EN);
     }
 
     /** 顯示用字串：OCTET STRING 含不可列印字元時以 hex 表示 */

@@ -1,5 +1,7 @@
 package io.github.chiayi1224.simplesnmp.storage;
 
+import io.github.chiayi1224.simplesnmp.i18n.StoredText;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,17 +28,17 @@ final class DiscoveryRepository {
     /** 系統重啟時，前一次執行中斷的掃描標記為失敗 */
     void failInterruptedScans() {
         try {
-            int n = db.update("UPDATE device_scans SET status='FAILED', error='系統重啟，掃描中斷', finished=? WHERE status='RUNNING'",
-                Db.now());
-            if (n > 0) log.warn("{} 筆未完成的掃描已標記為失敗", n);
+            int n = db.update("UPDATE device_scans SET status='FAILED', error=?, finished=? WHERE status='RUNNING'",
+                StoredText.encode(Msg.of("scan.interrupted_by_restart")), Db.now());
+            if (n > 0) log.warn("{} unfinished scans marked as failed", n);
         } catch (SQLException ex) {
-            log.error("failInterruptedScans 失敗: {}", ex.getMessage());
+            log.error("Failed to mark interrupted scans: {}", ex.getMessage());
         }
     }
 
     long create(String deviceName, boolean walk) throws SQLException {
-        db.update("INSERT INTO device_scans(device_name, started, status, progress, walk) VALUES(?,?,'RUNNING','排隊中',?)",
-            deviceName, Db.now(), Db.flag(walk));
+        db.update("INSERT INTO device_scans(device_name, started, status, progress, walk) VALUES(?,?,'RUNNING',?,?)",
+            deviceName, Db.now(), StoredText.encode(Msg.of("scan.progress.queued")), Db.flag(walk));
         return db.queryLong("SELECT last_insert_rowid()");
     }
 
@@ -89,7 +91,7 @@ final class DiscoveryRepository {
                 ? db.query(sql, rs -> toRow(rs, false), deviceName)
                 : db.query(sql, rs -> toRow(rs, false));
         } catch (SQLException ex) {
-            log.error("queryScans 失敗: {}", ex.getMessage());
+            log.error("Failed to query scans: {}", ex.getMessage());
             return new ArrayList<>();
         }
     }
@@ -99,7 +101,7 @@ final class DiscoveryRepository {
         try {
             return db.queryOne("SELECT * FROM device_scans WHERE id=?", rs -> toRow(rs, true), scanId);
         } catch (SQLException ex) {
-            log.error("queryScan 失敗: {}", ex.getMessage());
+            log.error("Failed to query scan: {}", ex.getMessage());
             return null;
         }
     }
@@ -139,7 +141,7 @@ final class DiscoveryRepository {
                     return m;
                 }, pageParams.toArray()));
         } catch (SQLException ex) {
-            log.error("queryScanOids 失敗: {}", ex.getMessage());
+            log.error("Failed to query scan OIDs: {}", ex.getMessage());
             result.put("total", 0L);
             result.put("items", new ArrayList<>());
         }

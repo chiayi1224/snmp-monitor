@@ -1,5 +1,6 @@
 package io.github.chiayi1224.simplesnmp.web;
 
+import io.github.chiayi1224.simplesnmp.i18n.LocaleFilter;
 import io.github.chiayi1224.simplesnmp.discovery.DiscoveryService;
 import io.github.chiayi1224.simplesnmp.profile.ProfileCollector;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
@@ -74,7 +75,7 @@ public class JettyServer {
                 new HttpConnectionFactory(httpsConfig));
             httpsConnector.setPort(httpsPort);
             server.addConnector(httpsConnector);
-            log.info("HTTPS 已啟用 → https://localhost:{}", httpsPort);
+            log.info("HTTPS enabled: https://localhost:{}", httpsPort);
         }
 
         // ── Servlet context ────────────────────────────────────────
@@ -85,6 +86,8 @@ public class JettyServer {
         // ── 認證 Filter ────────────────────────────────────────────
         // Filter、登入與帳號管理共用同一份 session 撤銷登記（強制踢出）
         SessionRevocation revocation = new SessionRevocation();
+        // 語系必須最先設定：之後的 Filter 與 Servlet 產生的使用者訊息都依它決定語言
+        ctx.addFilter(new FilterHolder(new LocaleFilter()), "/*", EnumSet.of(DispatcherType.REQUEST));
         ctx.addFilter(
             new FilterHolder(new AuthFilter(store, revocation)),
             "/*",
@@ -122,7 +125,7 @@ public class JettyServer {
 
         server.setHandler(ctx);
         server.start();
-        log.info("Web Server 啟動 → http://localhost:{}", httpPort);
+        log.info("Web server started: http://localhost:{}", httpPort);
     }
 
     public void stop() throws Exception {
@@ -135,11 +138,11 @@ public class JettyServer {
      */
     private void ensureKeystore() throws Exception {
         if (Files.exists(keystorePath)) {
-            log.info("使用既有 KeyStore：{}", keystorePath);
+            log.info("Using existing KeyStore: {}", keystorePath);
             return;
         }
 
-        log.info("KeyStore 不存在，正在建立自簽憑證：{}", keystorePath);
+        log.info("KeyStore not found, creating a self-signed certificate: {}", keystorePath);
         Files.createDirectories(keystorePath.getParent());
 
         ProcessBuilder pb = new ProcessBuilder(
@@ -160,8 +163,8 @@ public class JettyServer {
         String output = new String(proc.getInputStream().readAllBytes());
         int rc = proc.waitFor();
         if (rc != 0) {
-            throw new Exception("keytool 建立 KeyStore 失敗 (rc=" + rc + "):\n" + output);
+            throw new Exception("keytool failed to create the KeyStore (rc=" + rc + "):\n" + output);
         }
-        log.info("自簽憑證建立完成：{}", keystorePath);
+        log.info("Self-signed certificate created: {}", keystorePath);
     }
 }

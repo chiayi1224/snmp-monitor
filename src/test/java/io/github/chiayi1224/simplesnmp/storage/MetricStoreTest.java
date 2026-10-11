@@ -387,7 +387,7 @@ class MetricStoreTest {
         assertTrue(store.queryAlerts(null, null, true, 100).isEmpty());
         List<Map<String, Object>> history = store.queryAlerts("A", 10);
         assertEquals(2, history.size());
-        assertEquals("設備已刪除", history.get(0).get("message"));
+        assertEquals("設備已刪除", io.github.chiayi1224.simplesnmp.i18n.StoredText.localize((String) history.get(0).get("message")));
     }
 
     // ─── 設備 SNMP 版本與 v3 設定 ───────────────────────────────
@@ -550,7 +550,7 @@ class MetricStoreTest {
         try (MetricStore reopened = new MetricStore(dbPath)) {
             Map<String, Object> scan = reopened.queryScan(id);
             assertEquals("FAILED", scan.get("status"));
-            assertTrue(scan.get("error").toString().contains("重啟"));
+            assertTrue(io.github.chiayi1224.simplesnmp.i18n.StoredText.localize(scan.get("error").toString()).contains("重啟"));
         }
     }
 

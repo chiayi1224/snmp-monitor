@@ -1,5 +1,8 @@
 package io.github.chiayi1224.simplesnmp.web;
 
+import io.github.chiayi1224.simplesnmp.i18n.StoredText;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
+import io.github.chiayi1224.simplesnmp.i18n.Messages;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import jakarta.servlet.*;
 import jakarta.servlet.http.HttpServletRequest;
@@ -91,7 +94,7 @@ public class AuthFilter implements Filter {
         String rawUri = request.getRequestURI();
         String lowerRaw = rawUri == null ? "" : rawUri.toLowerCase();
         if (lowerRaw.contains("%2f") || lowerRaw.contains("%5c")) {
-            sendError(response, 400, "路徑格式不正確");
+            sendError(response, 400, Msg.of("request.path_invalid"));
             return;
         }
         String servletPath = request.getServletPath();
@@ -113,8 +116,8 @@ public class AuthFilter implements Filter {
             // admin 路徑禁止 Token 存取
             if (path.startsWith("/api/admin/")) {
                 // 稽核記錄原始 URI（rawUri）而非正規化後的 path，保留攻擊者的編碼痕跡
-                store.saveAuditLog("TOKEN_FAIL", null, ip, method, rawUri, 403, "Token 不可存取管理介面");
-                sendError(response, 403, "管理介面僅允許 Session 登入");
+                store.saveAuditLog("TOKEN_FAIL", null, ip, method, rawUri, 403, StoredText.encode(Msg.of("audit.token_admin_forbidden")));
+                sendError(response, 403, Msg.of("auth.admin_session_only"));
                 return;
             }
 
@@ -127,8 +130,8 @@ public class AuthFilter implements Filter {
                 return;
             }
 
-            store.saveAuditLog("TOKEN_FAIL", null, ip, method, rawUri, 401, "無效的 API Token");
-            sendError(response, 401, "無效的 API Token");
+            store.saveAuditLog("TOKEN_FAIL", null, ip, method, rawUri, 401, StoredText.encode(Msg.of("auth.token_invalid")));
+            sendError(response, 401, Msg.of("auth.token_invalid"));
             return;
         }
 
@@ -143,9 +146,9 @@ public class AuthFilter implements Filter {
             Object uid = user.get("id");
             if (uid instanceof Number && revocation.isRevoked(((Number) uid).longValue(), session)) {
                 session.invalidate();
-                store.saveAuditLog("SESSION_REVOKED", actor, ip, method, rawUri, 401, "帳號已被管理員變更，session 已撤銷");
+                store.saveAuditLog("SESSION_REVOKED", actor, ip, method, rawUri, 401, StoredText.encode(Msg.of("audit.session_revoked")));
                 if (path.startsWith("/api/")) {
-                    sendError(response, 401, "登入已失效，請重新登入");
+                    sendError(response, 401, Msg.of("auth.session_expired"));
                 } else {
                     response.sendRedirect("/login.html");
                 }
@@ -168,8 +171,8 @@ public class AuthFilter implements Filter {
                         || ("POST".equalsIgnoreCase(method) && "/api/auth/logout".equals(path));
                 if (!allowed) {
                     if (path.startsWith("/api/")) {
-                        store.saveAuditLog("MUST_CHANGE_BLOCKED", actor, ip, method, rawUri, 403, "尚未修改預設密碼");
-                        sendError(response, 403, "請先修改預設密碼後再使用其他功能");
+                        store.saveAuditLog("MUST_CHANGE_BLOCKED", actor, ip, method, rawUri, 403, StoredText.encode(Msg.of("audit.must_change_blocked")));
+                        sendError(response, 403, Msg.of("auth.must_change_first"));
                     } else {
                         response.sendRedirect("/change-password.html");
                     }
@@ -198,16 +201,19 @@ public class AuthFilter implements Filter {
 
         // ── 未認證 ────────────────────────────────────────────────
         if (path.startsWith("/api/")) {
-            sendError(response, 401, "未登入");
+            sendError(response, 401, Msg.of("auth.not_logged_in"));
         } else {
             response.sendRedirect("/login.html");
         }
     }
 
-    private void sendError(HttpServletResponse response, int status, String message) throws IOException {
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /** 錯誤回應：訊息依本次請求的語系（Accept-Language）產生 */
+    private void sendError(HttpServletResponse response, int status, Msg message) throws IOException {
         response.setContentType("application/json; charset=UTF-8");
         response.setStatus(status);
-        response.getWriter().write("{\"error\":\"" + message + "\"}");
+        JSON.writeValue(response.getWriter(), Map.of("error", Messages.get(message)));
     }
 
     private String getClientIp(HttpServletRequest request) {

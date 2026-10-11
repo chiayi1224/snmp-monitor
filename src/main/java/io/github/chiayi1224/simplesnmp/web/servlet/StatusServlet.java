@@ -37,7 +37,7 @@ public class StatusServlet extends BaseJsonServlet {
         try {
             writeJson(resp, store.queryLatestStatus());
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 }

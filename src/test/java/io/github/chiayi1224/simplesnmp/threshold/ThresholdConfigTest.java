@@ -63,7 +63,7 @@ class ThresholdConfigTest {
 
     // ─── 驗證 ─────────────────────────────────────────────────────
 
-    private static String validate(String metric, Direction dir, Double w, Double c) {
+    private static io.github.chiayi1224.simplesnmp.i18n.Msg validate(String metric, Direction dir, Double w, Double c) {
         return ThresholdConfig.validate(metric, dir, w, c, 5, 3, 2);
     }
 
@@ -83,7 +83,7 @@ class ThresholdConfigTest {
 
     @Test
     void validate_HIGH時Warning須小於Critical() {
-        assertTrue(validate("cpu", Direction.HIGH, 95.0, 90.0).contains("Warning"));
+        assertEquals("threshold.warning_below_critical", validate("cpu", Direction.HIGH, 95.0, 90.0).key());
         assertNotNull(validate("cpu", Direction.HIGH, 90.0, 90.0));
     }
 

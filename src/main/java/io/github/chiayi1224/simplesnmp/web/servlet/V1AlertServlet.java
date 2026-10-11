@@ -1,5 +1,9 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
+import java.util.Map;
+import java.util.List;
+import io.github.chiayi1224.simplesnmp.i18n.StoredText;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import io.github.chiayi1224.simplesnmp.threshold.Severity;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -48,7 +52,7 @@ public class V1AlertServlet extends BaseJsonServlet {
                 String rawSeverity = optText(json, "severity", null);
                 if (rawSeverity != null) {
                     severity = Severity.parse(rawSeverity);
-                    if (severity == null) { writeError(resp, 400, "severity 只能是 WARNING 或 CRITICAL"); return; }
+                    if (severity == null) { writeError(resp, 400, Msg.of("alert.severity_invalid")); return; }
                 }
                 active = optBool(json, "active", false);
                 if (json.has("limit") && json.get("limit").isNumber()) {
@@ -57,9 +61,16 @@ public class V1AlertServlet extends BaseJsonServlet {
                 }
             }
 
-            writeJson(resp, store.queryAlerts(device, severity, active, limit));
+            // 系統產生的描述保存為訊息代碼，依請求語系翻譯；舊資料與 Trap 原文原樣輸出
+            List<Map<String, Object>> rows = new java.util.ArrayList<>();
+            for (Map<String, Object> r : store.queryAlerts(device, severity, active, limit)) {
+                Map<String, Object> copy = new java.util.LinkedHashMap<>(r);
+                copy.computeIfPresent("message", (k, v) -> StoredText.localize(String.valueOf(v)));
+                rows.add(copy);
+            }
+            writeJson(resp, rows);
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 }

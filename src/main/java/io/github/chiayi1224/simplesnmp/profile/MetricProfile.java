@@ -1,5 +1,6 @@
 package io.github.chiayi1224.simplesnmp.profile;
 
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -29,17 +30,17 @@ public record MetricProfile(Long id, String name, String description, String mat
     }
 
     /** 合法回傳 null，否則回傳錯誤訊息 */
-    public String validate() {
-        if (name == null || name.isBlank()) return "範本名稱為必填";
-        if (name.length() > 64) return "範本名稱最多 64 個字元";
+    public Msg validate() {
+        if (name == null || name.isBlank()) return Msg.of("profile.name_required");
+        if (name.length() > 64) return Msg.of("profile.name_too_long", 64);
         if (!matchPrefix.isEmpty() && !OID_PATTERN.matcher(matchPrefix).matches()) {
-            return "sysObjectID 前綴不是合法的 OID：" + matchPrefix;
+            return Msg.of("profile.prefix_invalid", matchPrefix);
         }
         Set<String> keys = new HashSet<>();
         for (ProfileMetric m : metrics) {
-            String error = m.validate();
+            Msg error = m.validate();
             if (error != null) return error;
-            if (!keys.add(m.metricKey())) return "指標名稱重複：" + m.metricKey();
+            if (!keys.add(m.metricKey())) return Msg.of("profile.metric_duplicate", m.metricKey());
         }
         return null;
     }

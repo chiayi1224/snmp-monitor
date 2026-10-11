@@ -1,5 +1,8 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
+import java.util.Map;
+import java.util.List;
+import io.github.chiayi1224.simplesnmp.i18n.StoredText;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.servlet.http.HttpServletRequest;
@@ -31,9 +34,9 @@ public class AuditLogServlet extends BaseJsonServlet {
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         try {
-            writeJson(resp, store.queryAuditLogs(null, null, 100));
+            writeJson(resp, localized(store.queryAuditLogs(null, null, 100)));
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -56,9 +59,20 @@ public class AuditLogServlet extends BaseJsonServlet {
                 }
             }
 
-            writeJson(resp, store.queryAuditLogs(eventType, actor, limit));
+            writeJson(resp, localized(store.queryAuditLogs(eventType, actor, limit)));
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
+    }
+
+    /** 稽核說明中系統產生的文字依請求語系翻譯 */
+    private static List<Map<String, Object>> localized(List<Map<String, Object>> rows) {
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (Map<String, Object> r : rows) {
+            Map<String, Object> copy = new java.util.LinkedHashMap<>(r);
+            copy.computeIfPresent("detail", (k, v) -> StoredText.localize(String.valueOf(v)));
+            out.add(copy);
+        }
+        return out;
     }
 }

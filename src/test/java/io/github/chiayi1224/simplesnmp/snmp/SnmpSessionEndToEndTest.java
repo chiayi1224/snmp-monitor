@@ -118,7 +118,7 @@ class SnmpSessionEndToEndTest {
 
         SnmpException e = assertThrows(SnmpException.class,
             () -> session.get(device(a).community("wrong").build(), List.of(SYS_NAME)));
-        assertTrue(e.getMessage().contains("無回應"));
+        assertTrue(e.msg().text().contains("無回應"));
     }
 
     @Test
@@ -141,7 +141,7 @@ class SnmpSessionEndToEndTest {
         SnmpException e = assertThrows(SnmpException.class, () -> session.get(
             v3(a, "monitor", V3UserConfig.AuthProtocol.SHA, "WRONGpass", V3UserConfig.PrivProtocol.AES128, "privPass1"),
             List.of(SYS_NAME)));
-        assertTrue(e.getMessage().contains("認證") || e.getMessage().contains("無回應"), e.getMessage());
+        assertTrue(e.msg().text().contains("認證") || e.msg().text().contains("無回應"), e.getMessage());
     }
 
     @Test

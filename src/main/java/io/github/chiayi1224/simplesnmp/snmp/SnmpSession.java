@@ -1,6 +1,7 @@
 package io.github.chiayi1224.simplesnmp.snmp;
 
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -132,7 +133,7 @@ public class SnmpSession implements Closeable {
                 response = send(device, pdu, target);
             } catch (SnmpException e) {
                 if (rows.isEmpty()) throw e;
-                return new WalkResult(rows, false, e.getMessage());
+                return new WalkResult(rows, false, e.msg());
             }
 
             boolean advanced = false;
@@ -141,7 +142,7 @@ public class SnmpSession implements Closeable {
                     return new WalkResult(rows, false, null);   // endOfMibView 或已離開子樹
                 }
                 if (vb.getOid().compareTo(current) <= 0) {
-                    return new WalkResult(rows, false, "設備回傳的 OID 未遞增，停止走訪");
+                    return new WalkResult(rows, false, Msg.of("snmp.walk_not_increasing"));
                 }
                 rows.add(vb);
                 current = vb.getOid();
@@ -153,14 +154,14 @@ public class SnmpSession implements Closeable {
     }
 
     /** 走訪結果；truncated 表示因筆數或時間上限而停止，error 為中途失敗的原因（可為 null） */
-    public record WalkResult(List<VariableBinding> rows, boolean truncated, String error) {}
+    public record WalkResult(List<VariableBinding> rows, boolean truncated, Msg error) {}
 
     // ─── 連線目標 ─────────────────────────────────────────────────
 
     /** 依設備版本建立 SNMP4J target；v3 會先探索 engine ID 並加入本地化使用者 */
     Target<UdpAddress> targetFor(DeviceConfig device) throws IOException {
         UdpAddress address = (UdpAddress) GenericAddress.parse(device.getUdpAddress());
-        if (address == null) throw new SnmpException("設備位址不合法：" + device.getHost());
+        if (address == null) throw new SnmpException(Msg.of("snmp.invalid_address", device.getHost()));
 
         if (device.getSnmpVersion() != DeviceConfig.SnmpVersion.V3) {
             CommunityTarget<UdpAddress> t = new CommunityTarget<>(address, new OctetString(device.getCommunity()));
@@ -194,7 +195,7 @@ public class SnmpSession implements Closeable {
 
         long timeout = Math.max(device.getTimeoutMs(), 1000L);
         byte[] id = snmp.discoverAuthoritativeEngineID(address, timeout);
-        if (id == null) throw new SnmpException("SNMPv3 無法取得設備的 engine ID（設備無回應或未啟用 v3）");
+        if (id == null) throw new SnmpException(Msg.of("snmp.v3_no_engine_id"));
         OctetString engineId = new OctetString(id);
         engineIds.put(cacheKey(device), engineId);
         log.debug("[{}] engine ID = {}", device.getName(), engineId.toHexString());
@@ -241,30 +242,31 @@ public class SnmpSession implements Closeable {
             // v3 逾時可能是 engine ID 已變（設備重灌），清除快取讓下次重新探索
             if (device.getSnmpVersion() == DeviceConfig.SnmpVersion.V3) invalidate(device);
             Exception error = event == null ? null : event.getError();
-            throw new SnmpException("設備無回應" + (error != null ? "：" + error.getMessage() : ""));
+            throw new SnmpException(error != null ? Msg.of("snmp.no_response_detail", error.getMessage()) : Msg.of("snmp.no_response"));
         }
         if (response.getType() == PDU.REPORT) {
             invalidate(device);
-            throw new SnmpException("SNMPv3 認證失敗：" + describeReport(response));
+            throw new SnmpException(Msg.of("snmp.v3_auth_failed", describeReport(response)));
         }
         return response;
     }
 
     private static void checkErrorStatus(PDU response) throws SnmpException {
         if (response.getErrorStatus() != PDU.noError) {
-            throw new SnmpException("設備回應錯誤：" + response.getErrorStatusText());
+            throw new SnmpException(Msg.of("snmp.error_status", response.getErrorStatusText()));
         }
     }
 
-    private static String describeReport(PDU report) {
-        if (report.size() == 0) return "未知原因";
+    /** v3 REPORT 的原因；巢狀訊息（Msg）或無法辨識時的 OID 字串 */
+    private static Object describeReport(PDU report) {
+        if (report.size() == 0) return Msg.of("snmp.report.unknown");
         OID oid = report.get(0).getOid();
-        if (oid.startsWith(SnmpConstants.usmStatsUnknownUserNames))  return "使用者名稱不存在";
-        if (oid.startsWith(SnmpConstants.usmStatsWrongDigests))      return "認證密碼或協定錯誤";
-        if (oid.startsWith(SnmpConstants.usmStatsDecryptionErrors))  return "加密密碼或協定錯誤";
-        if (oid.startsWith(SnmpConstants.usmStatsUnsupportedSecLevels)) return "設備不支援此安全等級";
-        if (oid.startsWith(SnmpConstants.usmStatsNotInTimeWindows))  return "時間視窗不同步";
-        if (oid.startsWith(SnmpConstants.usmStatsUnknownEngineIDs))  return "engine ID 不符";
+        if (oid.startsWith(SnmpConstants.usmStatsUnknownUserNames))  return Msg.of("snmp.report.unknown_user");
+        if (oid.startsWith(SnmpConstants.usmStatsWrongDigests))      return Msg.of("snmp.report.wrong_digest");
+        if (oid.startsWith(SnmpConstants.usmStatsDecryptionErrors))  return Msg.of("snmp.report.decryption");
+        if (oid.startsWith(SnmpConstants.usmStatsUnsupportedSecLevels)) return Msg.of("snmp.report.unsupported_level");
+        if (oid.startsWith(SnmpConstants.usmStatsNotInTimeWindows))  return Msg.of("snmp.report.time_window");
+        if (oid.startsWith(SnmpConstants.usmStatsUnknownEngineIDs))  return Msg.of("snmp.report.unknown_engine");
         return oid.toString();
     }
 

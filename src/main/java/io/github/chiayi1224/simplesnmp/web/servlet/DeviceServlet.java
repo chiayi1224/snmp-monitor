@@ -1,5 +1,7 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
+import io.github.chiayi1224.simplesnmp.i18n.StoredText;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.config.DiskFilter;
 import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
@@ -104,13 +106,13 @@ public class DeviceServlet extends BaseJsonServlet {
             } else {
                 Map<String, Object> device = store.queryDeviceByName(name);
                 if (device == null) {
-                    writeError(resp, 404, "找不到設備：" + name);
+                    writeError(resp, 404, Msg.of("device.not_found", name));
                 } else {
                     writeJson(resp, device);
                 }
             }
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -131,7 +133,7 @@ public class DeviceServlet extends BaseJsonServlet {
                 String host  = requireText(body, "host", resp); if (host  == null) return;
 
                 DeviceConfig device = parseDevice(body, dName, host, null);
-                String error = device.validate();
+                Msg error = device.validate();
                 if (error == null) error = validateProfile(device);
                 if (error != null) { writeError(resp, 400, error); return; }
 
@@ -140,7 +142,7 @@ public class DeviceServlet extends BaseJsonServlet {
                 store.deleteUnknownSourceByIp(host);
                 trapReceiver.reloadDevices(store.loadEnabledDevices());
                 resp.setStatus(201);
-                writeJson(resp, Map.of("message", "新增成功", "name", dName));
+                writeJson(resp, Map.of("message", t("common.created"), "name", dName));
 
             } else {
                 // 更新或刪除
@@ -148,14 +150,14 @@ public class DeviceServlet extends BaseJsonServlet {
                 if ("delete".equals(action)) {
                     store.deleteDeviceByName(name);
                     trapReceiver.reloadDevices(store.loadEnabledDevices());
-                    writeJson(resp, Map.of("message", "刪除成功", "name", name));
+                    writeJson(resp, Map.of("message", t("common.deleted"), "name", name));
                 } else {
                     String host = requireText(body, "host", resp); if (host == null) return;
 
                     DeviceConfig existing = store.loadDevice(name);
                     DeviceConfig device   = parseDevice(body, name, host, existing);
                     // 以「合併舊密碼後」的結果驗證，確保 auth / priv 搭配與長度正確
-                    String error = mergePasswords(device, existing).validate();
+                    Msg error = mergePasswords(device, existing).validate();
                     if (error == null) error = validateProfile(device);
                     if (error != null) { writeError(resp, 400, error); return; }
 
@@ -163,11 +165,11 @@ public class DeviceServlet extends BaseJsonServlet {
                     store.updateDeviceByName(device, enabled);
                     if (existing != null) resolveExcludedDisks(name, existing.getDiskFilter(), device.getDiskFilter());
                     trapReceiver.reloadDevices(store.loadEnabledDevices());
-                    writeJson(resp, Map.of("message", "更新成功", "name", name));
+                    writeJson(resp, Map.of("message", t("common.updated"), "name", name));
                 }
             }
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -177,19 +179,19 @@ public class DeviceServlet extends BaseJsonServlet {
         DiskFilter filter = DiskFilter.parse(newFilter);
         store.resolveOpenAlerts(name,
             metric -> metric.startsWith("disk:") && !filter.matches(metric.substring("disk:".length())),
-            "磁碟已不在監控範圍");
+            StoredText.encode(Msg.of("alert.disk_excluded")));
     }
 
     /** 以對話框目前填的連線資料探測磁碟；已存在的設備可沿用已儲存的 community 與 v3 密碼 */
     private void probeDisks(JsonNode body, String name, HttpServletResponse resp) throws IOException {
-        if (collector == null) { writeError(resp, 503, "磁碟探測功能未啟用"); return; }
+        if (collector == null) { writeError(resp, 503, Msg.of("device.probe_disabled")); return; }
         String host = requireText(body, "host", resp); if (host == null) return;
 
         DeviceConfig existing = name == null ? null : store.loadDevice(name);
-        if (name != null && existing == null) { writeError(resp, 404, "找不到設備：" + name); return; }
+        if (name != null && existing == null) { writeError(resp, 404, Msg.of("device.not_found", name)); return; }
 
-        DeviceConfig parsed = parseDevice(body, name == null ? "(探測)" : name, host, existing);
-        String error = mergePasswords(parsed, existing).validate();
+        DeviceConfig parsed = parseDevice(body, name == null ? "(probe)" : name, host, existing);
+        Msg error = mergePasswords(parsed, existing).validate();
         if (error != null) { writeError(resp, 400, error); return; }
 
         DeviceConfig target = withStoredSecrets(parsed, existing);
@@ -206,10 +208,10 @@ public class DeviceServlet extends BaseJsonServlet {
                 disks.add(d);
             }
         } catch (SnmpException e) {
-            writeError(resp, 502, "設備無法查詢：" + e.getMessage());
+            writeError(resp, 502, Msg.of("device.query_failed", e.msg()));
             return;
         } catch (MetricException e) {
-            writeError(resp, 502, "設備沒有提供磁碟資訊：" + e.getMessage());
+            writeError(resp, 502, Msg.of("device.no_disk_info", e.msg()));
             return;
         }
         writeJson(resp, Map.of("disks", disks));
@@ -292,10 +294,10 @@ public class DeviceServlet extends BaseJsonServlet {
     }
 
     /** 手動指定的範本必須存在；合法回傳 null */
-    private String validateProfile(DeviceConfig d) {
+    private Msg validateProfile(DeviceConfig d) {
         if (d.getProfileId() == null) return null;
         if (d.getProfileId() < 0 || store.loadProfile(d.getProfileId()) == null) {
-            return "找不到監控範本 #" + d.getProfileId();
+            return Msg.of("profile.not_found_id", String.valueOf(d.getProfileId()));
         }
         return null;
     }

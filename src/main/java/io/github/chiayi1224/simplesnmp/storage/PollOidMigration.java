@@ -49,9 +49,9 @@ final class PollOidMigration {
         if (settings.getBool(FLAG, false)) return;
         try {
             migrate();
-            settings.upsert(FLAG, "true", "舊版 Poll OID 設定已轉換為監控範本（請勿修改）");
+            settings.upsert(FLAG, "true", SettingsRepository.seedDescription(FLAG));
         } catch (SQLException ex) {
-            log.error("Poll OID 升級轉換失敗，下次啟動重試: {}", ex.getMessage());
+            log.error("Poll OID migration failed, will retry on next start: {}", ex.getMessage());
         }
     }
 
@@ -86,7 +86,7 @@ final class PollOidMigration {
         }
         int assigned = db.update(
             "UPDATE devices SET profile_id=? WHERE profile_id IS NULL AND sys_object_id='' AND status != 'UNKNOWN'", id);
-        log.info("已將舊版 Poll OID 設定轉換為範本「{}」（停用 {}），指定給 {} 台設備",
+        log.info("Migrated legacy Poll OID settings to profile \"{}\" (disabled {}), assigned to {} devices",
             PROFILE_NAME, String.join("、", disabled), assigned);
     }
 }

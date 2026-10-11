@@ -1,5 +1,7 @@
 package io.github.chiayi1224.simplesnmp.storage;
 
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
+import io.github.chiayi1224.simplesnmp.i18n.Localized;
 import org.mindrot.jbcrypt.BCrypt;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,10 +34,10 @@ final class UserRepository {
             if (db.queryLong("SELECT COUNT(*) FROM users") == 0) {
                 add("admin", "admin", "admin", true);
                 // 初始密碼固定並記載於 README，不寫入 log
-                log.warn("已建立預設管理員帳號 admin（初始密碼見 README），首次登入須修改密碼！");
+                log.warn("Created default admin account \"admin\" (initial password in README); it must be changed at first login");
             }
         } catch (SQLException ex) {
-            log.error("seedDefaultAdmin 失敗: {}", ex.getMessage());
+            log.error("Failed to create default admin: {}", ex.getMessage());
         }
     }
 
@@ -53,7 +55,7 @@ final class UserRepository {
                 return user;
             }, username);
         } catch (SQLException ex) {
-            log.error("authenticate 失敗: {}", ex.getMessage());
+            log.error("Authentication query failed: {}", ex.getMessage());
             return null;
         }
     }
@@ -74,7 +76,7 @@ final class UserRepository {
                 return row;
             });
         } catch (SQLException ex) {
-            log.error("queryAllUsers 失敗: {}", ex.getMessage());
+            log.error("Failed to query users: {}", ex.getMessage());
             return new ArrayList<>();
         }
     }
@@ -85,36 +87,48 @@ final class UserRepository {
         String hash = BCrypt.hashpw(password, BCrypt.gensalt());
         db.update("INSERT INTO users(username, password_hash, role, enabled, must_change, created, updated) VALUES(?,?,?,1,?,?,?)",
             username, hash, role, Db.flag(mustChange), now, now);
-        log.info("新增帳號: {} ({}) mustChange={}", username, role, mustChange);
+        log.info("Account created: {} ({}) mustChange={}", username, role, mustChange);
     }
 
     /** 修改密碼，並清除強制改密碼旗標 */
     void changePassword(long id, String newPassword) throws SQLException {
         String hash = BCrypt.hashpw(newPassword, BCrypt.gensalt());
         db.update("UPDATE users SET password_hash=?, must_change=0, updated=? WHERE id=?", hash, Db.now(), id);
-        log.info("帳號 id={} 密碼已更新，must_change 已清除", id);
+        log.info("Account id={} changed its password; must_change cleared", id);
     }
 
     /** 管理員重設他人密碼，並設定強制改密碼旗標（該帳號下次登入須自行修改） */
     void resetPassword(long id, String newPassword) throws SQLException {
         String hash = BCrypt.hashpw(newPassword, BCrypt.gensalt());
         db.update("UPDATE users SET password_hash=?, must_change=1, updated=? WHERE id=?", hash, Db.now(), id);
-        log.info("帳號 id={} 密碼已由管理員重設，must_change 已設定", id);
+        log.info("Account id={} password reset by an administrator; must_change set", id);
     }
 
     /** 更新帳號（不含密碼） */
     void update(long id, String username, String role, boolean enabled) throws SQLException {
         db.update("UPDATE users SET username=?, role=?, enabled=?, updated=? WHERE id=?",
             username, role, Db.flag(enabled), Db.now(), id);
-        log.info("更新帳號 id={}: {} enabled={}", id, username, enabled);
+        log.info("Account updated id={}: {} enabled={}", id, username, enabled);
     }
 
     /** 刪除帳號（保護：至少留一個啟用帳號） */
     void delete(long id) throws SQLException {
         if (db.queryLong("SELECT COUNT(*) FROM users WHERE enabled=1 AND id != ?", id) == 0) {
-            throw new SQLException("至少需要保留一個啟用的帳號");
+            throw new LastActiveUserException();
         }
         db.update("DELETE FROM users WHERE id=?", id);
-        log.info("刪除帳號 id={}", id);
+        log.info("Account deleted id={}", id);
+    }
+
+    /** 刪除後會沒有任何啟用帳號 */
+    public static final class LastActiveUserException extends SQLException implements Localized {
+        LastActiveUserException() {
+            super("At least one enabled account must remain");
+        }
+
+        @Override
+        public Msg msg() {
+            return Msg.of("user.last_active");
+        }
     }
 }

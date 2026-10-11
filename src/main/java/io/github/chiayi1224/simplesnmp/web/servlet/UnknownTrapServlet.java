@@ -1,5 +1,6 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -38,14 +39,14 @@ public class UnknownTrapServlet extends BaseJsonServlet {
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        if (pathName(req) != null) { writeError(resp, 404, "找不到路徑"); return; }
+        if (pathName(req) != null) { writeError(resp, 404, Msg.of("request.path_not_found")); return; }
         try {
             java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();
             result.put("unknownOids",    store.queryUnknownTraps());
             result.put("unknownSources", store.queryUnknownSources());
             writeJson(resp, result);
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -60,14 +61,14 @@ public class UnknownTrapServlet extends BaseJsonServlet {
             String[] parts = path == null ? new String[0] : path.split("/");
             long id = parts.length == 2 ? parseId(parts[1]) : -1;
             if (id < 0 || !("oids".equals(parts[0]) || "sources".equals(parts[0]))) {
-                writeError(resp, 404, "找不到路徑");
+                writeError(resp, 404, Msg.of("request.path_not_found"));
                 return;
             }
             boolean deleted = "oids".equals(parts[0]) ? store.deleteUnknownTrap(id) : store.deleteUnknownSource(id);
-            if (!deleted) { writeError(resp, 404, "找不到記錄 #" + id); return; }
-            writeJson(resp, java.util.Map.of("message", "刪除成功", "id", id));
+            if (!deleted) { writeError(resp, 404, Msg.of("trap.unknown_not_found", String.valueOf(id))); return; }
+            writeJson(resp, java.util.Map.of("message", t("common.deleted"), "id", id));
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 }

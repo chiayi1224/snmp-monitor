@@ -1,5 +1,6 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -32,13 +33,13 @@ public class V1DeviceServlet extends BaseJsonServlet {
             } else {
                 Map<String, Object> device = store.queryDeviceByName(name);
                 if (device == null) {
-                    writeError(resp, 404, "找不到設備：" + name);
+                    writeError(resp, 404, Msg.of("device.not_found", name));
                 } else {
                     writeJson(resp, device);
                 }
             }
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 }

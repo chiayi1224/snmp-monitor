@@ -1,5 +1,7 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
+import io.github.chiayi1224.simplesnmp.i18n.StoredText;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import io.github.chiayi1224.simplesnmp.web.SessionRevocation;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -40,7 +42,7 @@ public class AuthServlet extends BaseJsonServlet {
         if (session != null && session.getAttribute("user") != null) {
             writeJson(resp, session.getAttribute("user"));
         } else {
-            writeError(resp, 401, "未登入");
+            writeError(resp, 401, Msg.of("auth.not_logged_in"));
         }
     }
 
@@ -61,8 +63,8 @@ public class AuthServlet extends BaseJsonServlet {
 
             Map<String, Object> user = store.authenticate(username, password);
             if (user == null) {
-                store.saveAuditLog("LOGIN_FAIL", username, ip, "POST", "/api/auth/login", 401, "帳號或密碼錯誤");
-                writeError(resp, 401, "帳號或密碼錯誤");
+                store.saveAuditLog("LOGIN_FAIL", username, ip, "POST", "/api/auth/login", 401, StoredText.encode(Msg.of("auth.bad_credentials")));
+                writeError(resp, 401, Msg.of("auth.bad_credentials"));
                 return;
             }
 
@@ -78,12 +80,12 @@ public class AuthServlet extends BaseJsonServlet {
             boolean mustChange = Boolean.TRUE.equals(user.get("mustChange"));
             if (mustChange) {
                 resp.setStatus(202);
-                writeJson(resp, Map.of("mustChange", true, "message", "請先修改預設密碼", "username", user.get("username")));
+                writeJson(resp, Map.of("mustChange", true, "message", t("auth.must_change_password"), "username", user.get("username")));
             } else {
-                writeJson(resp, Map.of("message", "登入成功", "username", user.get("username"), "role", user.get("role")));
+                writeJson(resp, Map.of("message", t("auth.login_success"), "username", user.get("username"), "role", user.get("role")));
             }
         } catch (Exception e) {
-            writeError(resp, 400, "請求格式錯誤");
+            writeError(resp, 400, Msg.of("request.invalid"));
         }
     }
 
@@ -98,7 +100,7 @@ public class AuthServlet extends BaseJsonServlet {
             session.invalidate();
         }
         store.saveAuditLog("LOGOUT", actor, ip, "POST", "/api/auth/logout", 200, null);
-        writeJson(resp, Map.of("message", "已登出"));
+        writeJson(resp, Map.of("message", t("auth.logged_out")));
     }
 
     private String getClientIp(HttpServletRequest req) {

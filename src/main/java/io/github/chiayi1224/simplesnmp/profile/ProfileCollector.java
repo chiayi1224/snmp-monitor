@@ -1,5 +1,6 @@
 package io.github.chiayi1224.simplesnmp.profile;
 
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.config.DiskFilter;
 import io.github.chiayi1224.simplesnmp.config.OidConstants;
@@ -29,12 +30,12 @@ public final class ProfileCollector {
     static final int WALK_MAX_ROWS = 5_000;
 
     /** 單一指標的結果：成功時 values 有值、error 為 null；失敗時相反 */
-    public record MetricResult(ProfileMetric metric, List<MetricValue> values, String error) {
+    public record MetricResult(ProfileMetric metric, List<MetricValue> values, Msg error) {
         public boolean ok() { return error == null; }
     }
 
     /** 設備的查詢結果與表格讀取錯誤（子樹 → 原因） */
-    public record Fetched(SnmpResult result, Map<String, String> walkErrors) {}
+    public record Fetched(SnmpResult result, Map<String, Msg> walkErrors) {}
 
     private final SnmpSession session;
 
@@ -81,7 +82,7 @@ public final class ProfileCollector {
         for (String oid : scalarOids(profile)) if (!scalars.requested().contains(oid)) more.add(oid);
         if (!more.isEmpty()) values.putAll(session.get(device, more));
 
-        Map<String, String> errors = new HashMap<>();
+        Map<String, Msg> errors = new HashMap<>();
         return new Fetched(new SnmpResult(values, walkTables(device, walkRoots(profile), errors)), errors);
     }
 
@@ -91,15 +92,15 @@ public final class ProfileCollector {
     }
 
     private Map<String, List<VariableBinding>> walkTables(DeviceConfig device, List<String> roots,
-                                                          Map<String, String> errors) throws IOException {
+                                                          Map<String, Msg> errors) throws IOException {
         Map<String, List<VariableBinding>> walks = new HashMap<>();
         for (String root : roots) {
             try {
                 SnmpSession.WalkResult walk = session.walk(device, root, WALK_MAX_ROWS, 0);
-                if (walk.error() != null) errors.put(root, "表格 " + root + " 讀取中斷：" + walk.error());
+                if (walk.error() != null) errors.put(root, Msg.of("metric.table_interrupted", root, walk.error()));
                 walks.put(root, walk.rows());
             } catch (SnmpException e) {
-                errors.put(root, "表格 " + root + " 讀取失敗：" + e.getMessage());
+                errors.put(root, Msg.of("metric.table_failed", root, e.msg()));
                 walks.put(root, List.of());
             }
         }
@@ -113,7 +114,7 @@ public final class ProfileCollector {
      * @throws SnmpException 設備無回應、v3 認證失敗等
      */
     public List<MetricValue> probeDisks(DeviceConfig device) throws IOException, MetricException {
-        MetricProfile probe = new MetricProfile(null, "（磁碟探測）", "", "", false, List.of(
+        MetricProfile probe = new MetricProfile(null, "disk-probe", "", "", false, List.of(
             new ProfileMetric(ProfileMetric.DISK, MetricKind.STORAGE_TABLE,
                 Map.of("typeFilter", OidConstants.HR_STORAGE_TYPE_FIXED_DISK), "%", true)));
         // 直接走訪：設備無回應時拋出 SnmpException，不會被誤判成「沒有磁碟資訊」
@@ -138,11 +139,11 @@ public final class ProfileCollector {
                 List<MetricValue> values = m.kind().calculate(m.params(), fetched.result());
                 if (ProfileMetric.DISK.equals(m.metricKey())) values = filterDisks(values, diskFilter);
                 for (MetricValue v : values) {
-                    if (!Double.isFinite(v.value())) throw new MetricException("計算結果不是有限數值：" + v.value());
+                    if (!Double.isFinite(v.value())) throw new MetricException(Msg.of("metric.not_finite", String.valueOf(v.value())));
                 }
                 out.add(new MetricResult(m, values, null));
             } catch (MetricException e) {
-                out.add(new MetricResult(m, null, walkErrorFor(m, fetched.walkErrors(), e.getMessage())));
+                out.add(new MetricResult(m, null, walkErrorFor(m, fetched.walkErrors(), e.msg())));
             }
         }
         return out;
@@ -158,13 +159,13 @@ public final class ProfileCollector {
         if (kept.isEmpty()) {
             List<String> names = new ArrayList<>();
             for (MetricValue v : values) names.add(String.valueOf(v.instance()));
-            throw new MetricException("沒有符合磁碟過濾條件「" + filter.text() + "」的掛載點，設備回報：" + String.join("、", names));
+            throw new MetricException(Msg.of("metric.disk_filter_no_match", filter.text(), String.join(", ", names)));
         }
         return kept;
     }
 
     /** 表格讀取失敗時，以該錯誤作為指標失敗的原因（比「表格沒有資料」更明確） */
-    private static String walkErrorFor(ProfileMetric m, Map<String, String> walkErrors, String fallback) {
+    private static Msg walkErrorFor(ProfileMetric m, Map<String, Msg> walkErrors, Msg fallback) {
         for (String root : m.kind().requiredWalkRoots(m.params())) {
             if (walkErrors.containsKey(root)) return walkErrors.get(root);
         }

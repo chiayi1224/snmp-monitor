@@ -1,5 +1,6 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import io.github.chiayi1224.simplesnmp.threshold.Severity;
 import io.github.chiayi1224.simplesnmp.trap.TrapReceiver;
@@ -48,7 +49,7 @@ public class TrapMappingServlet extends BaseJsonServlet {
         try {
             writeJson(resp, store.queryAllTrapMappings());
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -66,16 +67,16 @@ public class TrapMappingServlet extends BaseJsonServlet {
             Severity severity   = parseSeverity(body, resp); if (severity == null) return;
 
             if (store.trapTriggeredOidExists(triggeredOid, -1)) {
-                writeError(resp, 409, "觸發 OID 已有對應：" + triggeredOid);
+                writeError(resp, 409, Msg.of("trap.mapping_exists", triggeredOid));
                 return;
             }
             store.addTrapMapping(metricName, triggeredOid, resolvedOid, description, severity);
             if (fromUnknownId > 0) store.deleteUnknownTrap(fromUnknownId);
             trapReceiver.reloadMappings(store.loadTrapMappings());
             resp.setStatus(201);
-            writeJson(resp, Map.of("message", "新增成功", "metricName", metricName));
+            writeJson(resp, Map.of("message", t("common.created"), "metricName", metricName));
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -83,7 +84,7 @@ public class TrapMappingServlet extends BaseJsonServlet {
     protected void doPut(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         try {
             long id = pathId(req);
-            if (id < 0) { writeError(resp, 400, "缺少 ID"); return; }
+            if (id < 0) { writeError(resp, 400, Msg.of("request.id_missing")); return; }
 
             JsonNode body = parseBody(req, resp);
             if (body == null) return;
@@ -96,14 +97,14 @@ public class TrapMappingServlet extends BaseJsonServlet {
             Severity severity   = parseSeverity(body, resp); if (severity == null) return;
 
             if (store.trapTriggeredOidExists(triggeredOid, id)) {
-                writeError(resp, 409, "觸發 OID 已有對應：" + triggeredOid);
+                writeError(resp, 409, Msg.of("trap.mapping_exists", triggeredOid));
                 return;
             }
             store.updateTrapMapping(id, metricName, triggeredOid, resolvedOid, description, severity, enabled);
             trapReceiver.reloadMappings(store.loadTrapMappings());
-            writeJson(resp, Map.of("message", "更新成功", "id", id));
+            writeJson(resp, Map.of("message", t("common.updated"), "id", id));
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -111,13 +112,13 @@ public class TrapMappingServlet extends BaseJsonServlet {
     protected void doDelete(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         try {
             long id = pathId(req);
-            if (id < 0) { writeError(resp, 400, "缺少 ID"); return; }
+            if (id < 0) { writeError(resp, 400, Msg.of("request.id_missing")); return; }
 
             store.deleteTrapMapping(id);
             trapReceiver.reloadMappings(store.loadTrapMappings());
-            writeJson(resp, Map.of("message", "刪除成功", "id", id));
+            writeJson(resp, Map.of("message", t("common.deleted"), "id", id));
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -126,7 +127,7 @@ public class TrapMappingServlet extends BaseJsonServlet {
         String raw = optText(body, "severity", null);
         if (raw == null) return Severity.CRITICAL;
         Severity s = Severity.parse(raw);
-        if (s == null) writeError(resp, 400, "severity 只能是 WARNING 或 CRITICAL");
+        if (s == null) writeError(resp, 400, Msg.of("alert.severity_invalid"));
         return s;
     }
 }

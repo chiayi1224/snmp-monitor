@@ -1,5 +1,6 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.servlet.http.HttpServletRequest;
@@ -37,7 +38,7 @@ public class ApiTokenServlet extends BaseJsonServlet {
         try {
             writeJson(resp, store.queryAllApiTokens());
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -57,7 +58,7 @@ public class ApiTokenServlet extends BaseJsonServlet {
                 String token = store.createApiToken(description, expiresAt);
                 resp.setStatus(201);
                 writeJson(resp, Map.of(
-                    "message",     "Token 已產生，請複製儲存，之後不會再顯示",
+                    "message",     t("token.created"),
                     "token",       token,
                     "description", description
                 ));
@@ -66,18 +67,18 @@ public class ApiTokenServlet extends BaseJsonServlet {
                 String action = optText(body, "action", "update");
                 if ("delete".equals(action)) {
                     store.deleteApiToken(id);
-                    writeJson(resp, Map.of("message", "已刪除"));
+                    writeJson(resp, Map.of("message", t("common.deleted")));
                 } else {
                     String  description = requireText(body, "description", resp);
                     if (description == null) return;
                     boolean enabled     = optBool(body, "enabled", true);
                     String  expiresAt   = optText(body, "expiresAt", null);
                     store.updateApiToken(id, description, enabled, expiresAt);
-                    writeJson(resp, Map.of("message", "已更新"));
+                    writeJson(resp, Map.of("message", t("common.updated")));
                 }
             }
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 }

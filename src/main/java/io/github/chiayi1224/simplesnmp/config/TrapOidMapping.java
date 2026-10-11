@@ -1,5 +1,7 @@
 package io.github.chiayi1224.simplesnmp.config;
 
+import io.github.chiayi1224.simplesnmp.i18n.Messages;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.threshold.Severity;
 
 import java.util.ArrayList;
@@ -62,9 +64,14 @@ public class TrapOidMapping {
      */
     public static List<Mapping> defaults() {
         List<Mapping> list = new ArrayList<>();
-        list.add(new Mapping(CPU_TRIGGERED,  CPU_RESOLVED,  "cpu",    "CPU 使用率過高"));
-        list.add(new Mapping(MEM_TRIGGERED,  MEM_RESOLVED,  "memory", "記憶體使用率過高"));
-        list.add(new Mapping(DISK_TRIGGERED, DISK_RESOLVED, "disk",   "磁碟使用率過高"));
+        list.add(new Mapping(CPU_TRIGGERED,  CPU_RESOLVED,  "cpu",    seed("cpu")));
+        list.add(new Mapping(MEM_TRIGGERED,  MEM_RESOLVED,  "memory", seed("memory")));
+        list.add(new Mapping(DISK_TRIGGERED, DISK_RESOLVED, "disk",   seed("disk")));
         return list;
+    }
+
+    /** 預設對應的說明（正體中文；寫入資料庫後為使用者可編輯的資料，不隨語系變動） */
+    private static String seed(String metric) {
+        return Messages.get(Msg.of("trap.default." + metric), Messages.ZH_TW);
     }
 }

@@ -1,5 +1,6 @@
 package io.github.chiayi1224.simplesnmp.profile;
 
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.config.OidConstants;
 import org.snmp4j.smi.OID;
 import org.snmp4j.smi.Variable;
@@ -23,7 +24,7 @@ public enum MetricKind {
 
     /** 單一 OID 的值，可乘以倍率。參數：oid、scale（選填，預設 1） */
     VALUE {
-        @Override String validate(Map<String, String> p) {
+        @Override Msg validate(Map<String, String> p) {
             return firstError(requireOid(p, "oid"), optionalScale(p));
         }
         @Override List<String> scalarOids(Map<String, String> p) { return List.of(p.get("oid")); }
@@ -34,7 +35,7 @@ public enum MetricKind {
 
     /** 100 減去單一 OID 的值（例如 CPU idle → 使用率）。參數：oid */
     HUNDRED_MINUS {
-        @Override String validate(Map<String, String> p) { return requireOid(p, "oid"); }
+        @Override Msg validate(Map<String, String> p) { return requireOid(p, "oid"); }
         @Override List<String> scalarOids(Map<String, String> p) { return List.of(p.get("oid")); }
         @Override List<MetricValue> compute(Map<String, String> p, SnmpResult r) throws MetricException {
             return List.of(MetricValue.of(100.0 - number(r, p.get("oid"))));
@@ -43,7 +44,7 @@ public enum MetricKind {
 
     /** 已用 ÷ 總量 × 100。參數：used、total、scale（換算成位元組的倍率，選填，預設 1） */
     USED_TOTAL_PERCENT {
-        @Override String validate(Map<String, String> p) {
+        @Override Msg validate(Map<String, String> p) {
             return firstError(requireOid(p, "used"), requireOid(p, "total"), optionalScale(p));
         }
         @Override List<String> scalarOids(Map<String, String> p) { return List.of(p.get("used"), p.get("total")); }
@@ -56,7 +57,7 @@ public enum MetricKind {
 
     /** 已用 ÷（已用＋剩餘）× 100。參數：used、free、scale（換算成位元組的倍率，選填，預設 1） */
     USED_FREE_PERCENT {
-        @Override String validate(Map<String, String> p) {
+        @Override Msg validate(Map<String, String> p) {
             return firstError(requireOid(p, "used"), requireOid(p, "free"), optionalScale(p));
         }
         @Override List<String> scalarOids(Map<String, String> p) { return List.of(p.get("used"), p.get("free")); }
@@ -69,12 +70,12 @@ public enum MetricKind {
 
     /** 表格欄位所有列的平均（例如多顆 CPU 的負載）。參數：column */
     TABLE_AVERAGE {
-        @Override String validate(Map<String, String> p) { return requireOid(p, "column"); }
+        @Override Msg validate(Map<String, String> p) { return requireOid(p, "column"); }
         @Override List<String> scalarOids(Map<String, String> p) { return List.of(); }
         @Override List<String> walkRoots(Map<String, String> p) { return List.of(p.get("column")); }
         @Override List<MetricValue> compute(Map<String, String> p, SnmpResult r) throws MetricException {
             List<VariableBinding> rows = r.walk(p.get("column"));
-            if (rows.isEmpty()) throw new MetricException("表格沒有資料：" + p.get("column"));
+            if (rows.isEmpty()) throw new MetricException(Msg.of("metric.table_empty", p.get("column")));
             double sum = 0;
             for (VariableBinding vb : rows) sum += toDouble(vb.getVariable(), vb.getOid().toString());
             return List.of(MetricValue.of(sum / rows.size()));
@@ -88,14 +89,14 @@ public enum MetricKind {
      *      first（"true" 時只取第一列且不帶實例名稱，例如記憶體）
      */
     STORAGE_TABLE {
-        @Override String validate(Map<String, String> p) {
+        @Override Msg validate(Map<String, String> p) {
             return firstError(requireOid(p, "typeFilter"), optionalOid(p, "entry"));
         }
         @Override List<String> scalarOids(Map<String, String> p) { return List.of(); }
         @Override List<String> walkRoots(Map<String, String> p) { return List.of(entry(p)); }
         @Override List<MetricValue> compute(Map<String, String> p, SnmpResult r) throws MetricException {
             List<VariableBinding> rows = r.walk(entry(p));
-            if (rows.isEmpty()) throw new MetricException("表格沒有資料：" + entry(p));
+            if (rows.isEmpty()) throw new MetricException(Msg.of("metric.table_empty", entry(p)));
             boolean first = Boolean.parseBoolean(p.get("first"));
 
             List<MetricValue> out = new ArrayList<>();
@@ -111,14 +112,14 @@ public enum MetricKind {
                 out.add(new MetricValue(first ? null : name, pct, totalBytes, usedBytes));
                 if (first) break;
             }
-            if (first && out.isEmpty()) throw new MetricException("表格中沒有類型為 " + p.get("typeFilter") + " 的資料");
+            if (first && out.isEmpty()) throw new MetricException(Msg.of("metric.storage_type_missing", p.get("typeFilter")));
             return out;
         }
     },
 
     /** Net-SNMP 記憶體：(total − free − buffer − cache) ÷ total（UCD-SNMP-MIB，單位 KB）。無參數 */
     UCD_MEMORY {
-        @Override String validate(Map<String, String> p) { return null; }
+        @Override Msg validate(Map<String, String> p) { return null; }
         @Override List<String> scalarOids(Map<String, String> p) {
             return List.of(OidConstants.MEM_TOTAL, OidConstants.MEM_FREE, OidConstants.MEM_BUFFER, OidConstants.MEM_CACHE);
         }
@@ -133,7 +134,7 @@ public enum MetricKind {
     };
 
     /** 參數合法回傳 null，否則回傳錯誤訊息 */
-    abstract String validate(Map<String, String> params);
+    abstract Msg validate(Map<String, String> params);
 
     /** 需要以 GET 取得的 OID */
     abstract List<String> scalarOids(Map<String, String> params);
@@ -146,7 +147,7 @@ public enum MetricKind {
 
     // ─── 公開入口（含 null 參數保護）─────────────────────────────
 
-    public String validateParams(Map<String, String> params) {
+    public Msg validateParams(Map<String, String> params) {
         return validate(params == null ? Map.of() : params);
     }
 
@@ -175,25 +176,25 @@ public enum MetricKind {
         return e == null || e.isBlank() ? HR_STORAGE_ENTRY : e;
     }
 
-    private static String requireOid(Map<String, String> p, String key) {
+    private static Msg requireOid(Map<String, String> p, String key) {
         String v = p.get(key);
-        if (v == null || v.isBlank()) return "缺少參數 " + key;
-        return OID_PATTERN.matcher(v).matches() ? null : "參數 " + key + " 不是合法的 OID：" + v;
+        if (v == null || v.isBlank()) return Msg.of("metric.param_missing", key);
+        return OID_PATTERN.matcher(v).matches() ? null : Msg.of("metric.param_invalid_oid", key, v);
     }
 
-    private static String optionalOid(Map<String, String> p, String key) {
+    private static Msg optionalOid(Map<String, String> p, String key) {
         String v = p.get(key);
         return v == null || v.isBlank() ? null : requireOid(p, key);
     }
 
-    private static String optionalScale(Map<String, String> p) {
+    private static Msg optionalScale(Map<String, String> p) {
         String v = p.get("scale");
         if (v == null || v.isBlank()) return null;
         try {
             double d = Double.parseDouble(v);
-            return d > 0 && Double.isFinite(d) ? null : "參數 scale 必須大於 0";
+            return d > 0 && Double.isFinite(d) ? null : Msg.of("metric.scale_positive");
         } catch (NumberFormatException e) {
-            return "參數 scale 必須是數字";
+            return Msg.of("metric.scale_number");
         }
     }
 
@@ -202,19 +203,19 @@ public enum MetricKind {
         return v == null || v.isBlank() ? 1.0 : Double.parseDouble(v);
     }
 
-    private static String firstError(String... errors) {
-        for (String e : errors) if (e != null) return e;
+    private static Msg firstError(Msg... errors) {
+        for (Msg e : errors) if (e != null) return e;
         return null;
     }
 
     private static MetricValue percent(double used, double total, double scale) throws MetricException {
-        if (total == 0) throw new MetricException("總量為 0，無法計算百分比");
+        if (total == 0) throw new MetricException(Msg.of("metric.total_zero"));
         return new MetricValue(null, used / total * 100.0, Math.round(total * scale), Math.round(used * scale));
     }
 
     private static double number(SnmpResult r, String oid) throws MetricException {
         Variable v = r.scalar(oid);
-        if (v == null || v.isException()) throw new MetricException("OID 不存在：" + oid);
+        if (v == null || v.isException()) throw new MetricException(Msg.of("metric.oid_missing", oid));
         return toDouble(v, oid);
     }
 
@@ -226,7 +227,7 @@ public enum MetricKind {
             try {
                 return Double.parseDouble(v.toString().trim());
             } catch (NumberFormatException nfe) {
-                throw new MetricException("OID " + oid + " 的值不是數字：" + v);
+                throw new MetricException(Msg.of("metric.not_number", oid, String.valueOf(v)));
             }
         }
     }

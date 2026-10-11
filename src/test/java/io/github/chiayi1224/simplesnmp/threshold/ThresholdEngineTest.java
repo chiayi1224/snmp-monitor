@@ -46,6 +46,11 @@ class ThresholdEngineTest {
         return e.isEmpty() ? null : e.get(0);
     }
 
+    /** 告警描述（系統文字以訊息代碼保存，轉成正體中文比對） */
+    private static String msg(Map<String, Object> event) {
+        return io.github.chiayi1224.simplesnmp.i18n.StoredText.localize((String) event.get("message"));
+    }
+
     private void cpu(String device, double... values) {
         for (double v : values) engine.evaluateCpu(device, v);
     }
@@ -136,7 +141,7 @@ class ThresholdEngineTest {
 
         cpu("A", 99);
         assertEquals("RESOLVED", last("A").get("eventType"));
-        assertEquals("閾值已移除", last("A").get("message"));
+        assertEquals("閾值已移除", msg(last("A")));
         cpu("A", 99, 99, 99, 99);
         assertEquals(2, events("A").size());
     }
@@ -207,18 +212,18 @@ class ThresholdEngineTest {
         Map<String, Object> e = last("A");
         assertEquals("device_unreachable", e.get("metricName"));
         assertEquals("CRITICAL", e.get("severity"));
-        assertEquals("SNMP 無回應", e.get("message"));
+        assertEquals("SNMP 無回應", msg(e));
 
         engine.evaluateReachability(d, DeviceStatus.ONLINE);
         assertEquals("RESOLVED", last("A").get("eventType"));
-        assertEquals("連線恢復", last("A").get("message"));
+        assertEquals("連線恢復", msg(last("A")));
     }
 
     @Test
     void 連線中斷_Ping失敗訊息與WARNING等級() {
         engine.evaluateReachability(device("WARNING", 1), DeviceStatus.OFFLINE);
         assertEquals("WARNING", last("A").get("severity"));
-        assertTrue(((String) last("A").get("message")).contains("Ping"));
+        assertTrue(msg(last("A")).contains("Ping"));
     }
 
     @Test

@@ -1,5 +1,6 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import io.github.chiayi1224.simplesnmp.web.SessionRevocation;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -44,14 +45,14 @@ public class UserServlet extends BaseJsonServlet {
         try {
             writeJson(resp, store.queryAllUsers());
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         try {
-            if (requireAdmin(req, resp, "只有管理員可以新增帳號") == null) return;
+            if (requireAdmin(req, resp, Msg.of("user.admin_only_create")) == null) return;
 
             JsonNode body    = parseBody(req, resp);
             if (body == null) return;
@@ -61,15 +62,15 @@ public class UserServlet extends BaseJsonServlet {
             String role      = optText(body, "role", ADMIN_ROLE);
 
             if (password.length() < 6) {
-                writeError(resp, 400, "密碼長度至少 6 字元");
+                writeError(resp, 400, Msg.of("user.password_too_short", 6));
                 return;
             }
 
             store.addUser(username, password, role);
             resp.setStatus(201);
-            writeJson(resp, Map.of("message", "新增成功", "username", username));
+            writeJson(resp, Map.of("message", t("common.created"), "username", username));
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -80,7 +81,7 @@ public class UserServlet extends BaseJsonServlet {
             String   path  = pathName(req);
             String[] parts = path == null ? new String[0] : path.split("/");
             long id = parseId(parts.length > 0 ? parts[0] : null);
-            if (id < 0) { writeError(resp, 400, "缺少 ID"); return; }
+            if (id < 0) { writeError(resp, 400, Msg.of("request.id_missing")); return; }
             boolean changePassword = parts.length >= 2 && "password".equals(parts[1]);
 
             Map<String, Object> actor = requireLogin(req, resp);
@@ -90,8 +91,8 @@ public class UserServlet extends BaseJsonServlet {
 
             // 改自己的密碼任何人皆可；其餘（改他人密碼、修改帳號資料）僅限 admin
             if (!(changePassword && self) && !isAdmin) {
-                writeError(resp, 403, changePassword ? "只有管理員可以修改其他帳號的密碼"
-                                                     : "只有管理員可以修改帳號");
+                writeError(resp, 403, changePassword ? Msg.of("user.admin_only_password")
+                                                     : Msg.of("user.admin_only_update"));
                 return;
             }
 
@@ -102,18 +103,18 @@ public class UserServlet extends BaseJsonServlet {
                 String newPassword = requireText(body, "password", resp);
                 if (newPassword == null) return;
                 if (newPassword.length() < 6) {
-                    writeError(resp, 400, "密碼長度至少 6 字元");
+                    writeError(resp, 400, Msg.of("user.password_too_short", 6));
                     return;
                 }
                 if (self) {
                     // 自己改密碼：清除強制改密碼旗標，不踢出
                     store.changePassword(id, newPassword);
-                    writeJson(resp, Map.of("message", "密碼已更新"));
+                    writeJson(resp, Map.of("message", t("user.password_updated")));
                 } else {
                     // 管理員重設他人密碼：該帳號下次登入須自行修改，並踢出其現有 session
                     store.resetPassword(id, newPassword);
                     revocation.revokeUser(id);
-                    writeJson(resp, Map.of("message", "密碼已重設，該帳號已被登出，下次登入須修改密碼"));
+                    writeJson(resp, Map.of("message", t("user.password_reset")));
                 }
             } else {
                 String  username = requireText(body, "username", resp);
@@ -121,20 +122,20 @@ public class UserServlet extends BaseJsonServlet {
                 String  role     = optText(body, "role",    ADMIN_ROLE);
                 boolean enabled  = optBool(body, "enabled", true);
                 if (self && !role.equals(actor.get("role"))) {
-                    writeError(resp, 400, "不能變更自己的角色");
+                    writeError(resp, 400, Msg.of("user.cannot_change_own_role"));
                     return;
                 }
                 if (self && !enabled) {
-                    writeError(resp, 400, "不能停用自己的帳號");
+                    writeError(resp, 400, Msg.of("user.cannot_disable_self"));
                     return;
                 }
                 store.updateUser(id, username, role, enabled);
                 // 修改他人帳號（角色、停用、名稱）後踢出其現有 session，讓變更立即生效
                 if (!self) revocation.revokeUser(id);
-                writeJson(resp, Map.of("message", "更新成功"));
+                writeJson(resp, Map.of("message", t("common.updated")));
             }
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -142,18 +143,18 @@ public class UserServlet extends BaseJsonServlet {
     protected void doDelete(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         try {
             long id = pathId(req);
-            if (id < 0) { writeError(resp, 400, "缺少 ID"); return; }
-            Map<String, Object> actor = requireAdmin(req, resp, "只有管理員可以刪除帳號");
+            if (id < 0) { writeError(resp, 400, Msg.of("request.id_missing")); return; }
+            Map<String, Object> actor = requireAdmin(req, resp, Msg.of("user.admin_only_delete"));
             if (actor == null) return;
             if (actorId(actor) == id) {
-                writeError(resp, 400, "不能刪除自己的帳號");
+                writeError(resp, 400, Msg.of("user.cannot_delete_self"));
                 return;
             }
             store.deleteUser(id);
             revocation.revokeUser(id);
-            writeJson(resp, Map.of("message", "刪除成功"));
+            writeJson(resp, Map.of("message", t("common.deleted")));
         } catch (Exception e) {
-            writeError(resp, 500, e.getMessage());
+            writeError(resp, 500, reason(e));
         }
     }
 
@@ -161,7 +162,7 @@ public class UserServlet extends BaseJsonServlet {
     private Map<String, Object> requireLogin(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         Map<String, Object> actor = sessionUser(req);
         if (actor == null || !(actor.get("id") instanceof Number)) {
-            writeError(resp, 401, "未登入");
+            writeError(resp, 401, Msg.of("auth.not_logged_in"));
             return null;
         }
         return actor;
@@ -169,7 +170,7 @@ public class UserServlet extends BaseJsonServlet {
 
     /** 取得登入的 admin 使用者；未登入回 401、非 admin 回 403，並回傳 null */
     private Map<String, Object> requireAdmin(HttpServletRequest req, HttpServletResponse resp,
-                                             String forbiddenMessage) throws IOException {
+                                             Msg forbiddenMessage) throws IOException {
         Map<String, Object> actor = requireLogin(req, resp);
         if (actor == null) return null;
         if (!ADMIN_ROLE.equals(actor.get("role"))) {

@@ -162,7 +162,7 @@ class SnmpPollerEndToEndTest {
         Map<String, Object> e = unreachableEvents().get(0);
         assertEquals("TRIGGERED", e.get("eventType"));
         assertEquals("CRITICAL", e.get("severity"));
-        assertEquals("SNMP 無回應", e.get("message"));
+        assertEquals("SNMP 無回應", io.github.chiayi1224.simplesnmp.i18n.StoredText.localize((String) e.get("message")));
 
         agent.silent(false);
         poller.pollAll();

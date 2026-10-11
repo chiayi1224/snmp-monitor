@@ -1,5 +1,7 @@
 package io.github.chiayi1224.simplesnmp.storage;
 
+import io.github.chiayi1224.simplesnmp.i18n.StoredText;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.config.TrapOidMapping;
 import io.github.chiayi1224.simplesnmp.config.V3UserConfig;
@@ -183,6 +185,7 @@ public class MetricStore implements AutoCloseable {
         MetricProfile applied = resolver.resolve((Long) row.get("profileId"), (String) row.get("sysObjectId"));
         row.put("appliedProfileId",   applied.id());
         row.put("appliedProfileName", applied.name());
+        row.put("appliedProfileDisplayName", BuiltinProfiles.displayName(applied));
     }
 
     /** 輪詢時更新設備的 sysObjectID */
@@ -247,7 +250,7 @@ public class MetricStore implements AutoCloseable {
     public void deleteDeviceByName(String name) throws SQLException {
         devices.deleteByName(name);
         thresholds.deleteByDevice(name);
-        alerts.resolveOpen(name, metric -> true, "設備已刪除");
+        alerts.resolveOpen(name, metric -> true, StoredText.encode(Msg.of("alert.device_deleted")));
     }
 
     /** 更新設備連線狀態（ONLINE / OFFLINE / UNKNOWN） */

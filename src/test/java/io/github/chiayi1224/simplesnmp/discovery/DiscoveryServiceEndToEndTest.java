@@ -3,6 +3,7 @@ package io.github.chiayi1224.simplesnmp.discovery;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
+import io.github.chiayi1224.simplesnmp.i18n.StoredText;
 import io.github.chiayi1224.simplesnmp.snmp.SnmpSession;
 import io.github.chiayi1224.simplesnmp.snmp.TestSnmpAgent;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
@@ -106,11 +107,11 @@ class DiscoveryServiceEndToEndTest {
 
         assertTrue(probe(scan, "hr-processor").get("supported").asBoolean());
         assertEquals(2, probe(scan, "hr-processor").get("samples").size());
-        assertTrue(probe(scan, "hr-storage").get("samples").get(0).asText().contains("固定磁碟"));
-        assertTrue(probe(scan, "hr-storage").get("samples").get(0).asText().contains("25.0%"));
-        assertTrue(probe(scan, "ucd-cpu").get("samples").get(0).asText().contains("idle 92%"));
+        assertTrue(StoredText.localize(probe(scan, "hr-storage").get("samples").get(0).asText()).contains("固定磁碟"));
+        assertTrue(StoredText.localize(probe(scan, "hr-storage").get("samples").get(0).asText()).contains("25.0%"));
+        assertTrue(StoredText.localize(probe(scan, "ucd-cpu").get("samples").get(0).asText()).contains("idle 92%"));
         assertTrue(probe(scan, "ucd-memory").get("supported").asBoolean());
-        assertTrue(probe(scan, "if-mib").get("samples").get(0).asText().contains("共 3 個介面"));
+        assertTrue(StoredText.localize(probe(scan, "if-mib").get("samples").get(0).asText()).contains("共 3 個介面"));
         assertFalse(probe(scan, "cisco-cpu").get("supported").asBoolean(), "Linux 不支援 Cisco MIB");
         assertFalse(probe(scan, "cisco-memory").get("supported").asBoolean());
         assertEquals(0L, scan.get("oidCount"), "未勾選 walk 時不收集 OID");
@@ -131,8 +132,8 @@ class DiscoveryServiceEndToEndTest {
             Map<String, Object> scan = await(service.start("Core-SW", false, List.of()).scanId());
 
             assertEquals("Cisco", scan.get("vendor"));
-            assertTrue(probe(scan, "cisco-cpu").get("samples").get(0).asText().contains("17%"));
-            String mem = probe(scan, "cisco-memory").get("samples").get(0).asText();
+            assertTrue(StoredText.localize(probe(scan, "cisco-cpu").get("samples").get(0).asText()).contains("17%"));
+            String mem = StoredText.localize(probe(scan, "cisco-memory").get("samples").get(0).asText());
             assertTrue(mem.contains("Processor") && mem.contains("50.0 MB") && mem.contains("150.0 MB"), mem);
             assertFalse(probe(scan, "ucd-cpu").get("supported").asBoolean());
         }
@@ -176,7 +177,7 @@ class DiscoveryServiceEndToEndTest {
         Map<String, Object> scan = await(service.start("Linux-1", true, List.of()).scanId());
 
         assertEquals("FAILED", scan.get("status"));
-        assertTrue(scan.get("error").toString().contains("無回應"));
+        assertTrue(StoredText.localize(scan.get("error").toString()).contains("無回應"));
     }
 
     @Test

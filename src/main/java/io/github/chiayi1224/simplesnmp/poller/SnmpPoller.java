@@ -1,5 +1,6 @@
 package io.github.chiayi1224.simplesnmp.poller;
 
+import io.github.chiayi1224.simplesnmp.i18n.Messages;
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.config.DiskFilter;
 import io.github.chiayi1224.simplesnmp.config.OidConstants;
@@ -165,7 +166,7 @@ public class SnmpPoller {
                 record(name, r.metric(), r.values());
                 failureLoggedAt.remove(name + "::" + key);
             } else {
-                warnLimited(name, key, r.error());
+                warnLimited(name, key, Messages.get(r.error(), Messages.EN));
             }
         }
 

@@ -39,7 +39,7 @@ final class ThresholdMigration {
                 FROM devices d CROSS JOIN threshold_settings t
                 WHERE 1=1
                 """, Db.now());
-            settings.upsert(FLAG, "true", "舊版全域閾值已轉換為每台設備的閾值（請勿修改）");
+            settings.upsert(FLAG, "true", SettingsRepository.seedDescription(FLAG));
             if (created > 0) log.info("Migrated global thresholds to per-device thresholds: {} rows created", created);
         } catch (SQLException ex) {
             log.error("Threshold migration failed, will retry on next start: {}", ex.getMessage());

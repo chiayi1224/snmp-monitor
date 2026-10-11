@@ -1,5 +1,6 @@
 package io.github.chiayi1224.simplesnmp.config;
 
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import java.util.Locale;
 
 /**
@@ -122,20 +123,20 @@ public class DeviceConfig {
      * 驗證設定；合法回傳 null，否則回傳錯誤訊息。
      * 密碼為 null（沿用舊值）時不檢查長度與 auth / priv 搭配，由更新端在合併舊值後再驗證。
      */
-    public String validate() {
-        if (snmpVersion == null) return "snmpVersion 只能是 1、2c 或 3";
-        if (diskFilter.length() > DiskFilter.MAX_LENGTH) return "磁碟過濾條件過長（最多 " + DiskFilter.MAX_LENGTH + " 個字元）";
-        if (!UNREACHABLE_SEVERITIES.contains(unreachableSeverity)) return "unreachableSeverity 只能是空白（關閉）、WARNING 或 CRITICAL";
-        if (unreachableCount < 1) return "unreachableCount 至少為 1";
+    public Msg validate() {
+        if (snmpVersion == null) return Msg.of("device.version_invalid");
+        if (diskFilter.length() > DiskFilter.MAX_LENGTH) return Msg.of("device.disk_filter_too_long", DiskFilter.MAX_LENGTH);
+        if (!UNREACHABLE_SEVERITIES.contains(unreachableSeverity)) return Msg.of("device.unreachable_severity_invalid");
+        if (unreachableCount < 1) return Msg.of("device.unreachable_count_invalid");
         if (snmpVersion != SnmpVersion.V3) return null;
 
-        if (v3User == null || v3User.isBlank()) return "SNMPv3 設備必須設定使用者名稱";
+        if (v3User == null || v3User.isBlank()) return Msg.of("device.v3_user_required");
         if (v3AuthPassword == null || v3PrivPassword == null) return null;
-        if (isSet(v3PrivPassword) && !isSet(v3AuthPassword)) return "設定加密密碼前必須先設定認證密碼";
+        if (isSet(v3PrivPassword) && !isSet(v3AuthPassword)) return Msg.of("device.v3_priv_needs_auth");
         if (isSet(v3AuthPassword) && v3AuthPassword.length() < V3_MIN_PASSWORD_LENGTH)
-            return "SNMPv3 認證密碼至少 " + V3_MIN_PASSWORD_LENGTH + " 個字元";
+            return Msg.of("device.v3_auth_too_short", V3_MIN_PASSWORD_LENGTH);
         if (isSet(v3PrivPassword) && v3PrivPassword.length() < V3_MIN_PASSWORD_LENGTH)
-            return "SNMPv3 加密密碼至少 " + V3_MIN_PASSWORD_LENGTH + " 個字元";
+            return Msg.of("device.v3_priv_too_short", V3_MIN_PASSWORD_LENGTH);
         return null;
     }
 

@@ -1,5 +1,6 @@
 package io.github.chiayi1224.simplesnmp.profile;
 
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -50,26 +51,26 @@ public record ProfileMetric(String metricKey, MetricKind kind, Map<String, Strin
     }
 
     /** 合法回傳 null，否則回傳錯誤訊息 */
-    public String validate() {
+    public Msg validate() {
         if (!isValidKey(metricKey)) {
-            return "指標名稱 '" + metricKey + "' 不合法：須為小寫英文開頭，只含小寫英數與底線，2～32 字元";
+            return Msg.of("metric.key_invalid", metricKey);
         }
         if (isReservedKey(metricKey)) {
-            return "指標名稱 '" + metricKey + "' 為系統保留名稱";
+            return Msg.of("metric.key_reserved", metricKey);
         }
         if (kind == null) {
-            return "指標 " + metricKey + " 的計算類型不支援，可用：" + java.util.Arrays.toString(MetricKind.values());
+            return Msg.of("metric.kind_unsupported", metricKey, java.util.Arrays.toString(MetricKind.values()));
         }
-        String error = kind.validateParams(params);
-        if (error != null) return "指標 " + metricKey + "：" + error;
+        Msg error = kind.validateParams(params);
+        if (error != null) return Msg.of("metric.param_error", metricKey, error);
 
         // disk 依掛載點產生多個值；其他指標只能產生單一值
         boolean multi = kind == MetricKind.STORAGE_TABLE && !Boolean.parseBoolean(params.get("first"));
         if (DISK.equals(metricKey) && !multi) {
-            return "指標 disk 必須使用 STORAGE_TABLE（不設定 first），以便依掛載點分別記錄";
+            return Msg.of("metric.disk_must_be_storage_table");
         }
         if (!DISK.equals(metricKey) && multi) {
-            return "指標 " + metricKey + " 使用 STORAGE_TABLE 時必須設定 first=true（只取單一值）";
+            return Msg.of("metric.storage_table_needs_first", metricKey);
         }
         return null;
     }

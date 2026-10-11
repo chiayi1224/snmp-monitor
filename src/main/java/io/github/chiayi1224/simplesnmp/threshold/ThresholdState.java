@@ -1,5 +1,8 @@
 package io.github.chiayi1224.simplesnmp.threshold;
 
+import io.github.chiayi1224.simplesnmp.i18n.StoredText;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
+
 /**
  * 單一設備單一指標的多等級告警狀態機（存在記憶體中，閾值設定於每次評估時傳入）
  *
@@ -91,7 +94,7 @@ public class ThresholdState {
         if (raw == null) {
             level = null;
             return AlertEvent.resolved(deviceName, metricName, from, value, 0.0,
-                message.isEmpty() ? "閾值設定已變更" : message);
+                message.isEmpty() ? StoredText.encode(Msg.of("alert.threshold_changed")) : message);
         }
         level = raw;
         return AlertEvent.changed(deviceName, metricName, raw, value, config.thresholdFor(raw), message);

@@ -1,5 +1,8 @@
 package io.github.chiayi1224.simplesnmp.discovery;
 
+import io.github.chiayi1224.simplesnmp.i18n.Localized;
+import io.github.chiayi1224.simplesnmp.i18n.StoredText;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.snmp.SnmpSession;
 import org.snmp4j.smi.OID;
@@ -25,8 +28,13 @@ public final class MibProbes {
                               List<String> samples, String error) {}
 
     /** 探測項目：GET 一組 OID，或 walk 一個子樹，再把結果整理成文字樣本 */
-    public record Probe(String key, String name, String mib, Kind kind, List<String> oids, int maxRows,
+    public record Probe(String key, String mib, Kind kind, List<String> oids, int maxRows,
                         Function<Map<String, Variable>, List<String>> summarize) {
+
+        /** 顯示名稱（保存訊息代碼，讀取時依語系翻譯） */
+        public String name() {
+            return StoredText.encode(Msg.of("probe." + key + ".name"));
+        }
 
         public enum Kind { GET, WALK }
 
@@ -41,9 +49,10 @@ public final class MibProbes {
                     }
                 }
                 List<String> samples = values.isEmpty() ? List.of() : summarize.apply(values);
-                return new ProbeResult(key, name, mib, !samples.isEmpty(), samples, null);
+                return new ProbeResult(key, name(), mib, !samples.isEmpty(), samples, null);
             } catch (IOException e) {
-                return new ProbeResult(key, name, mib, false, List.of(), e.getMessage());
+                return new ProbeResult(key, name(), mib, false, List.of(),
+                    e instanceof Localized l ? StoredText.encode(l.msg()) : e.getMessage());
             }
         }
     }
@@ -65,38 +74,37 @@ public final class MibProbes {
     static final String CISCO_CPU_5MIN      = "1.3.6.1.4.1.9.9.109.1.1.1.1.8";
     static final String CISCO_MEM_POOL      = "1.3.6.1.4.1.9.9.48.1.1.1";
 
-    private static final Map<String, String> STORAGE_TYPE_NAMES = Map.of(
-        "1", "其他", "2", "記憶體", "3", "虛擬記憶體", "4", "固定磁碟", "5", "卸除式磁碟",
-        "6", "軟碟", "7", "光碟", "8", "RAM Disk", "9", "Flash", "10", "網路磁碟");
+    /** hrStorageTypes 的已知編號（1～10），名稱由訊息代碼 probe.storage_type.&lt;編號&gt; 提供 */
+    private static final int STORAGE_TYPE_MAX = 10;
 
     public static final List<Probe> ALL = List.of(
-        new Probe("hr-processor", "處理器負載", "HOST-RESOURCES-MIB", Probe.Kind.WALK,
+        new Probe("hr-processor", "HOST-RESOURCES-MIB", Probe.Kind.WALK,
             List.of(HR_PROCESSOR_LOAD), 128, v -> limit(byIndex(v, HR_PROCESSOR_LOAD).entrySet().stream()
-                .map(e -> "處理器 #" + e.getKey() + "：" + e.getValue() + "%").toList())),
+                .map(e -> sample("probe.sample.processor", e.getKey(), e.getValue())).toList())),
 
-        new Probe("hr-storage", "儲存空間", "HOST-RESOURCES-MIB", Probe.Kind.WALK,
+        new Probe("hr-storage", "HOST-RESOURCES-MIB", Probe.Kind.WALK,
             List.of(HR_STORAGE_ENTRY), 7 * 300, MibProbes::summarizeStorage),
 
-        new Probe("ucd-cpu", "CPU（Net-SNMP）", "UCD-SNMP-MIB", Probe.Kind.GET,
+        new Probe("ucd-cpu", "UCD-SNMP-MIB", Probe.Kind.GET,
             List.of(UCD_CPU_USER, UCD_CPU_SYSTEM, UCD_CPU_IDLE), 0, v -> v.containsKey(UCD_CPU_IDLE)
                 ? List.of("user " + v.getOrDefault(UCD_CPU_USER, missing()) + "% / system "
                     + v.getOrDefault(UCD_CPU_SYSTEM, missing()) + "% / idle " + v.get(UCD_CPU_IDLE) + "%")
                 : List.of()),
 
-        new Probe("ucd-memory", "記憶體（Net-SNMP）", "UCD-SNMP-MIB", Probe.Kind.GET,
+        new Probe("ucd-memory", "UCD-SNMP-MIB", Probe.Kind.GET,
             List.of(UCD_MEM_TOTAL_REAL, UCD_MEM_AVAIL_REAL), 0, v -> v.containsKey(UCD_MEM_TOTAL_REAL)
-                ? List.of("實體記憶體 " + v.get(UCD_MEM_TOTAL_REAL) + " KB，可用 "
-                    + v.getOrDefault(UCD_MEM_AVAIL_REAL, missing()) + " KB")
+                ? List.of(sample("probe.sample.ucd_memory", v.get(UCD_MEM_TOTAL_REAL),
+                    v.getOrDefault(UCD_MEM_AVAIL_REAL, missing())))
                 : List.of()),
 
-        new Probe("if-mib", "網路介面", "IF-MIB", Probe.Kind.WALK,
+        new Probe("if-mib", "IF-MIB", Probe.Kind.WALK,
             List.of(IF_DESCR), 1000, MibProbes::summarizeInterfaces),
 
-        new Probe("cisco-cpu", "CPU（Cisco）", "CISCO-PROCESS-MIB", Probe.Kind.WALK,
+        new Probe("cisco-cpu", "CISCO-PROCESS-MIB", Probe.Kind.WALK,
             List.of(CISCO_CPU_5MIN), 64, v -> limit(byIndex(v, CISCO_CPU_5MIN).entrySet().stream()
-                .map(e -> "CPU #" + e.getKey() + " 5 分鐘平均：" + e.getValue() + "%").toList())),
+                .map(e -> sample("probe.sample.cisco_cpu", e.getKey(), e.getValue())).toList())),
 
-        new Probe("cisco-memory", "記憶體池（Cisco）", "CISCO-MEMORY-POOL-MIB", Probe.Kind.WALK,
+        new Probe("cisco-memory", "CISCO-MEMORY-POOL-MIB", Probe.Kind.WALK,
             List.of(CISCO_MEM_POOL), 7 * 100, MibProbes::summarizeCiscoMemory)
     );
 
@@ -115,11 +123,11 @@ public final class MibProbes {
         Map<Integer, Map<Integer, Variable>> table = byColumn(v, HR_STORAGE_ENTRY);
         List<String> out = new ArrayList<>();
         for (Map<Integer, Variable> row : table.values()) {
-            String descr = text(row.get(3));
-            String type  = row.containsKey(2) ? storageType(row.get(2).toString()) : "未知類型";
+            Object descr = text(row.get(3));
+            Object type  = row.containsKey(2) ? storageType(row.get(2).toString()) : Msg.of("probe.storage_type.unknown");
             long unit = num(row.get(4), 1), size = num(row.get(5), 0), used = num(row.get(6), 0);
             String pct = size > 0 ? String.format("%.1f%%", used * 100.0 / size) : "—";
-            out.add(descr + "（" + type + "）：" + humanBytes(size * unit) + "，已用 " + pct);
+            out.add(StoredText.encode(Msg.of("probe.sample.storage", descr, type, humanBytes(size * unit), pct)));
         }
         return limit(out);
     }
@@ -127,8 +135,8 @@ public final class MibProbes {
     private static List<String> summarizeInterfaces(Map<String, Variable> v) {
         List<String> names = byIndex(v, IF_DESCR).values().stream().map(Object::toString).toList();
         if (names.isEmpty()) return List.of();
-        String head = String.join("、", names.subList(0, Math.min(names.size(), MAX_SAMPLES)));
-        return List.of("共 " + names.size() + " 個介面：" + head + (names.size() > MAX_SAMPLES ? "…" : ""));
+        String head = String.join(", ", names.subList(0, Math.min(names.size(), MAX_SAMPLES)));
+        return List.of(sample("probe.sample.interfaces", names.size(), head + (names.size() > MAX_SAMPLES ? "…" : "")));
     }
 
     private static List<String> summarizeCiscoMemory(Map<String, Variable> v) {
@@ -136,8 +144,8 @@ public final class MibProbes {
         List<String> out = new ArrayList<>();
         for (Map<Integer, Variable> row : table.values()) {
             if (!row.containsKey(5) && !row.containsKey(6)) continue;
-            out.add(text(row.get(2)) + "：已用 " + humanBytes(num(row.get(5), 0))
-                + "，剩餘 " + humanBytes(num(row.get(6), 0)));
+            out.add(StoredText.encode(Msg.of("probe.sample.cisco_memory", text(row.get(2)),
+                humanBytes(num(row.get(5), 0)), humanBytes(num(row.get(6), 0)))));
         }
         return limit(out);
     }
@@ -168,9 +176,23 @@ public final class MibProbes {
         return out;
     }
 
-    private static String storageType(String typeOid) {
+    /** 已知的儲存類型回傳訊息代碼，其他回傳原始 OID */
+    private static Object storageType(String typeOid) {
         if (!typeOid.startsWith(HR_STORAGE_TYPES + ".")) return typeOid;
-        return STORAGE_TYPE_NAMES.getOrDefault(typeOid.substring(HR_STORAGE_TYPES.length() + 1), typeOid);
+        String n = typeOid.substring(HR_STORAGE_TYPES.length() + 1);
+        try {
+            int i = Integer.parseInt(n);
+            return i >= 1 && i <= STORAGE_TYPE_MAX ? Msg.of("probe.storage_type." + i) : typeOid;
+        } catch (NumberFormatException e) {
+            return typeOid;
+        }
+    }
+
+    /** 樣本文字：保存訊息代碼，參數一律轉成字串（避免數字依語系加上千分位） */
+    private static String sample(String key, Object... args) {
+        Object[] text = new Object[args.length];
+        for (int i = 0; i < args.length; i++) text[i] = args[i] instanceof Msg ? args[i] : String.valueOf(args[i]);
+        return StoredText.encode(Msg.of(key, text));
     }
 
     private static long num(Variable v, long def) {
@@ -178,8 +200,8 @@ public final class MibProbes {
         try { return v.toLong(); } catch (UnsupportedOperationException e) { return def; }
     }
 
-    private static String text(Variable v) {
-        return v == null ? "（無名稱）" : v.toString();
+    private static Object text(Variable v) {
+        return v == null ? Msg.of("probe.no_name") : v.toString();
     }
 
     private static String humanBytes(long bytes) {

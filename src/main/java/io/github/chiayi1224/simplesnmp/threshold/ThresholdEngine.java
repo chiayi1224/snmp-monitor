@@ -1,5 +1,7 @@
 package io.github.chiayi1224.simplesnmp.threshold;
 
+import io.github.chiayi1224.simplesnmp.i18n.StoredText;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import io.github.chiayi1224.simplesnmp.config.DeviceConfig;
 import io.github.chiayi1224.simplesnmp.model.DeviceStatus;
 import io.github.chiayi1224.simplesnmp.model.DiskInfo;
@@ -53,7 +55,7 @@ public class ThresholdEngine {
         ThresholdConfig config = store.loadThreshold(deviceName, metricName);
         ThresholdState state = stateFor(deviceName, metricName);
         AlertEvent event = config == null
-            ? state.clear("閾值已移除")
+            ? state.clear(StoredText.encode(Msg.of("alert.threshold_removed")))
             : state.evaluate(config, value);
         record(event);
     }
@@ -67,18 +69,18 @@ public class ThresholdEngine {
         ThresholdState state = stateFor(name, ProfileMetric.DEVICE_UNREACHABLE);
         Severity severity = Severity.parse(device.getUnreachableSeverity());
         if (severity == null) {
-            record(state.clear("連線中斷告警已關閉"));
+            record(state.clear(StoredText.encode(Msg.of("alert.unreachable_disabled"))));
             return;
         }
         boolean down = status == DeviceStatus.OFFLINE || status == DeviceStatus.SNMP_ERROR;
         ThresholdConfig.Builder b = new ThresholdConfig.Builder(ProfileMetric.DEVICE_UNREACHABLE)
             .rearmMargin(0).triggerCount(device.getUnreachableCount()).rearmCount(1);
         ThresholdConfig config = (severity == Severity.CRITICAL ? b.critical(0.5) : b.warning(0.5)).build();
-        String message = switch (status) {
-            case OFFLINE    -> "Ping 失敗，設備無法連線";
-            case SNMP_ERROR -> "SNMP 無回應";
-            default         -> "連線恢復";
-        };
+        String message = StoredText.encode(switch (status) {
+            case OFFLINE    -> Msg.of("alert.unreachable.ping");
+            case SNMP_ERROR -> Msg.of("alert.unreachable.snmp");
+            default         -> Msg.of("alert.unreachable.recovered");
+        });
         record(state.evaluate(config, down ? 1.0 : 0.0, message));
     }
 

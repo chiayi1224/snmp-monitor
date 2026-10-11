@@ -56,14 +56,14 @@ class MetricKindTest {
     @Test
     void CPU_idle未回傳時失敗() {
         MetricException e = assertThrows(MetricException.class, () -> MetricKind.HUNDRED_MINUS.calculate(CPU, scalars()));
-        assertTrue(e.getMessage().contains("不存在"));
+        assertTrue(e.msg().text().contains("不存在"));
     }
 
     @Test
     void CPU_idle非數字時失敗不拋其他例外() {
         MetricException e = assertThrows(MetricException.class,
             () -> MetricKind.HUNDRED_MINUS.calculate(CPU, scalars(OidConstants.CPU_IDLE, "noSuchObject")));
-        assertTrue(e.getMessage().contains("不是數字"));
+        assertTrue(e.msg().text().contains("不是數字"));
     }
 
     // ─── 移植自 PollParserTest：Memory（UCD_MEMORY）──────────────────
@@ -197,7 +197,7 @@ class MetricKindTest {
     void UsedTotal_總量為0時失敗() {
         MetricException e = assertThrows(MetricException.class, () -> MetricKind.USED_TOTAL_PERCENT.calculate(
             Map.of("used", "1.1", "total", "1.2"), scalars("1.1", 0, "1.2", 0)));
-        assertTrue(e.getMessage().contains("總量為 0"));
+        assertTrue(e.msg().text().contains("總量為 0"));
     }
 
     @Test
@@ -236,7 +236,7 @@ class MetricKindTest {
     void 驗證_缺少或不合法的OID() {
         assertNotNull(MetricKind.VALUE.validateParams(Map.of()));
         assertNotNull(MetricKind.VALUE.validateParams(Map.of("oid", "abc")));
-        assertTrue(MetricKind.USED_TOTAL_PERCENT.validateParams(Map.of("used", "1.1")).contains("total"));
+        assertTrue(MetricKind.USED_TOTAL_PERCENT.validateParams(Map.of("used", "1.1")).text().contains("total"));
         assertNotNull(MetricKind.STORAGE_TABLE.validateParams(Map.of()));
         assertNotNull(MetricKind.STORAGE_TABLE.validateParams(Map.of("typeFilter", FIXED_DISK, "entry", "x")));
         assertNull(MetricKind.UCD_MEMORY.validateParams(null));

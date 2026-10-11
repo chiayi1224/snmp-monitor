@@ -1,5 +1,8 @@
 package io.github.chiayi1224.simplesnmp.web.servlet;
 
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
+import io.github.chiayi1224.simplesnmp.i18n.Messages;
+import io.github.chiayi1224.simplesnmp.i18n.Localized;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -26,10 +29,25 @@ public abstract class BaseJsonServlet extends HttpServlet {
         JSON.writeValue(resp.getWriter(), data);
     }
 
-    /** 回傳錯誤 JSON */
+    /** 回傳錯誤 JSON（文字已由呼叫端依語系產生） */
     protected void writeError(HttpServletResponse resp, int status, String message) throws IOException {
         resp.setStatus(status);
         writeJson(resp, java.util.Map.of("error", message));
+    }
+
+    /** 回傳錯誤 JSON，訊息依目前請求的語系（Accept-Language）產生 */
+    protected void writeError(HttpServletResponse resp, int status, Msg message) throws IOException {
+        writeError(resp, status, Messages.get(message));
+    }
+
+    /** 依目前請求的語系產生文字 */
+    protected static String t(String key, Object... args) {
+        return Messages.get(Msg.of(key, args));
+    }
+
+    /** 例外給使用者的文字：帶訊息代碼者依語系產生，其他為原始訊息 */
+    protected static String reason(Exception e) {
+        return e instanceof Localized l ? Messages.get(l.msg()) : String.valueOf(e.getMessage());
     }
 
     /**
@@ -40,7 +58,7 @@ public abstract class BaseJsonServlet extends HttpServlet {
         try {
             return JSON.readTree(req.getReader());
         } catch (JsonProcessingException e) {
-            writeError(resp, 400, "JSON 格式錯誤：" + e.getOriginalMessage());
+            writeError(resp, 400, Msg.of("request.json_invalid", e.getOriginalMessage()));
             return null;
         }
     }
@@ -52,7 +70,7 @@ public abstract class BaseJsonServlet extends HttpServlet {
     protected String requireText(JsonNode body, String field, HttpServletResponse resp) throws IOException {
         JsonNode node = body.path(field);
         if (node.isMissingNode() || node.isNull() || node.asText().isBlank()) {
-            writeError(resp, 400, "欄位 " + field + " 為必填");
+            writeError(resp, 400, Msg.of("request.field_required", field));
             return null;
         }
         return node.asText().trim();

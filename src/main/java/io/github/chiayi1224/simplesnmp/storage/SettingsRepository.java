@@ -1,5 +1,7 @@
 package io.github.chiayi1224.simplesnmp.storage;
 
+import io.github.chiayi1224.simplesnmp.i18n.Messages;
+import io.github.chiayi1224.simplesnmp.i18n.Msg;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,31 +23,41 @@ final class SettingsRepository {
         this.db = db;
     }
 
+    /** 設定說明的訊息代碼 */
+    static Msg description(String key) {
+        return Msg.of("setting." + key + ".description");
+    }
+
+    /** 寫入資料庫的說明：正體中文（顯示時由 API 依請求語系另行翻譯） */
+    static String seedDescription(String key) {
+        return Messages.get(description(key), Messages.ZH_TW);
+    }
+
     /** 首次啟動寫入預設設定，並補上版本升級新增的 key */
     void seedDefaults() {
         try {
             if (db.queryLong("SELECT COUNT(*) FROM app_settings") == 0) {
-                upsert("web_port",              "8080",  "Web 管理介面 Port（修改後需重啟）");
-                upsert("trap_port",             "1162",  "SNMP Trap 接收 Port（修改後需重啟）");
-                upsert("poll_interval_seconds", "60",    "SNMP Poll 間隔秒數（修改後需重啟）");
-                upsert("snmp_retries",          "2",     "SNMP 重試次數");
-                upsert("snmp_timeout_ms",       "3000",  "SNMP 逾時毫秒");
-                upsert("ping_enabled",          "true",  "Poll 前是否先 Ping 確認主機可達");
-                upsert("ping_timeout_ms",       "1000",  "Ping 逾時毫秒");
-                log.info("已寫入預設系統設定");
+                upsert("web_port",              "8080",  seedDescription("web_port"));
+                upsert("trap_port",             "1162",  seedDescription("trap_port"));
+                upsert("poll_interval_seconds", "60",    seedDescription("poll_interval_seconds"));
+                upsert("snmp_retries",          "2",     seedDescription("snmp_retries"));
+                upsert("snmp_timeout_ms",       "3000",  seedDescription("snmp_timeout_ms"));
+                upsert("ping_enabled",          "true",  seedDescription("ping_enabled"));
+                upsert("ping_timeout_ms",       "1000",  seedDescription("ping_timeout_ms"));
+                log.info("Seeded default settings");
             }
         } catch (Exception ex) {
-            log.error("seedDefaultSettings 失敗: {}", ex.getMessage());
+            log.error("Failed to seed default settings: {}", ex.getMessage());
         }
 
-        seedIfAbsent("https_enabled",     "false",        "HTTPS 是否啟用（修改後需重啟）");
-        seedIfAbsent("https_port",        "8443",         "HTTPS Port（修改後需重啟）");
-        seedIfAbsent("keystore_path",     "keystore.jks", "KeyStore 路徑（相對 JAR 目錄，修改後需重啟）");
-        seedIfAbsent("keystore_password", "changeit",     "KeyStore 密碼（修改後需重啟）");
-        seedIfAbsent("trap_communities",  "*",            "允許的 v1/v2c Trap community（逗號分隔，* 代表全部接受）");
-        seedIfAbsent("retention_metrics_days", "90",  "CPU / 記憶體 / 磁碟 / 自訂指標保留天數（0 代表永久保留）");
-        seedIfAbsent("retention_alerts_days",  "365", "告警記錄保留天數（0 代表永久保留；各指標最後一筆狀態一律保留）");
-        seedIfAbsent("retention_audit_days",   "365", "稽核日誌保留天數（0 代表永久保留）");
+        seedIfAbsent("https_enabled",     "false",        seedDescription("https_enabled"));
+        seedIfAbsent("https_port",        "8443",         seedDescription("https_port"));
+        seedIfAbsent("keystore_path",     "keystore.jks", seedDescription("keystore_path"));
+        seedIfAbsent("keystore_password", "changeit",     seedDescription("keystore_password"));
+        seedIfAbsent("trap_communities",  "*",            seedDescription("trap_communities"));
+        seedIfAbsent("retention_metrics_days", "90",  seedDescription("retention_metrics_days"));
+        seedIfAbsent("retention_alerts_days",  "365", seedDescription("retention_alerts_days"));
+        seedIfAbsent("retention_audit_days",   "365", seedDescription("retention_audit_days"));
     }
 
     /** 確保特定 setting key 存在（若已存在則不覆蓋），用於版本升級時新增設定 */
@@ -54,7 +66,7 @@ final class SettingsRepository {
             db.update("INSERT OR IGNORE INTO app_settings(key, value, description, updated) VALUES(?,?,?,?)",
                 key, value, description, Db.now());
         } catch (Exception ex) {
-            log.error("seedSettingIfAbsent 失敗: {}", ex.getMessage());
+            log.error("Failed to seed setting: {}", ex.getMessage());
         }
     }
 
@@ -72,7 +84,7 @@ final class SettingsRepository {
                     return row;
                 });
             for (Map<String, Object> row : rows) result.put((String) row.get("key"), row);
-        } catch (SQLException ex) { log.error("queryAllSettings 失敗: {}", ex.getMessage()); }
+        } catch (SQLException ex) { log.error("Failed to query settings: {}", ex.getMessage()); }
         return result;
     }
 
@@ -80,7 +92,7 @@ final class SettingsRepository {
         try {
             String value = db.queryOne("SELECT value FROM app_settings WHERE key=?", rs -> rs.getString("value"), key);
             if (value != null) return value;
-        } catch (SQLException ex) { log.error("getSetting 失敗: {}", ex.getMessage()); }
+        } catch (SQLException ex) { log.error("Failed to read setting: {}", ex.getMessage()); }
         return defaultValue;
     }
 

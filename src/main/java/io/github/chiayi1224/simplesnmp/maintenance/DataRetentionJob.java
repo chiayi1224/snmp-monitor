@@ -63,7 +63,7 @@ public class DataRetentionJob {
         });
         scheduler.scheduleAtFixedRate(this::runSafely,
             INITIAL_DELAY.toMinutes(), PERIOD.toMinutes(), TimeUnit.MINUTES);
-        log.info("資料保存期限排程啟動，{} 分鐘後首次執行，之後每天一次", INITIAL_DELAY.toMinutes());
+        log.info("Data retention job scheduled: first run in {} minutes, then daily", INITIAL_DELAY.toMinutes());
     }
 
     public void stop() {
@@ -75,7 +75,7 @@ public class DataRetentionJob {
             runOnce();
         } catch (Exception e) {
             // 排程中的例外若不攔截，ScheduledExecutorService 會停止之後所有執行
-            log.error("資料保存期限清除失敗: {}", e.getMessage(), e);
+            log.error("Data retention purge failed: {}", e.getMessage(), e);
         }
     }
 
@@ -85,7 +85,7 @@ public class DataRetentionJob {
         int metrics = purge(METRICS_SETTING, DEFAULT_METRICS_DAYS, now, store::purgeMetricsBefore);
         int alerts  = purge(ALERTS_SETTING,  DEFAULT_ALERTS_DAYS,  now, store::purgeAlertsBefore);
         int audit   = purge(AUDIT_SETTING,   DEFAULT_AUDIT_DAYS,   now, store::purgeAuditLogsBefore);
-        log.info("資料保存期限清除完成：指標 {} 筆、告警 {} 筆、稽核日誌 {} 筆",
+        log.info("Data retention purge finished: metrics {}, alerts {}, audit logs {}",
             describe(metrics), describe(alerts), describe(audit));
         return new Result(metrics, alerts, audit);
     }
@@ -102,6 +102,6 @@ public class DataRetentionJob {
     }
 
     private static String describe(int n) {
-        return n < 0 ? "（永久保留）" : String.valueOf(n);
+        return n < 0 ? "(kept forever)" : String.valueOf(n);
     }
 }
