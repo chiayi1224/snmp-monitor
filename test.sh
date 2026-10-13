@@ -248,6 +248,38 @@ assert_status "GET /api/auth/me" 200
 assert_contains "me 含 username" '"username"'
 
 # ═════════════════════════════════════════════════════════════════
+section "4-1. CSRF 防護（Session 寫入請求）"
+# ═════════════════════════════════════════════════════════════════
+
+csrf_status() {
+  curl -s -o /dev/null -w '%{http_code}' -b "$COOKIE_JAR" "$@"
+}
+
+S=$(csrf_status -X POST -H "Origin: http://evil.example" -H "Content-Type: application/json" \
+  -d '{"username":"csrf1","password":"Csrf@1234","role":"admin"}' "${BASE}/api/admin/users")
+if [[ "$S" == "403" ]]; then ok "跨站 Origin 的寫入請求回 403"; else fail "跨站 Origin 應回 403，實際 $S"; fi
+
+S=$(csrf_status -X POST -H "Content-Type: text/plain" \
+  -d '{"username":"csrf2","password":"Csrf@1234","role":"admin"}' "${BASE}/api/admin/users")
+if [[ "$S" == "415" ]]; then ok "text/plain 的寫入請求回 415"; else fail "text/plain 應回 415，實際 $S"; fi
+
+S=$(csrf_status -X POST -H "Origin: ${BASE}" -H "Content-Type: application/json" \
+  -d '{"username":"csrf3","password":"Csrf@1234","role":"admin"}' "${BASE}/api/admin/users")
+if [[ "$S" == "201" ]]; then ok "同源 Origin 的 JSON 寫入請求放行"; else fail "同源寫入應回 201，實際 $S"; fi
+
+call GET /api/admin/users
+assert_not_contains "被擋下的請求沒有建立帳號" "csrf1"
+assert_not_contains "text/plain 的請求沒有建立帳號" "csrf2"
+CSRF3_ID=$(echo "$BODY" | jq -r '.[] | select(.username=="csrf3") | .id')
+call DELETE "/api/admin/users/${CSRF3_ID}"
+assert_status "清除測試帳號" 200
+
+SC=$(curl -s -D - -o /dev/null -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"Admin@123"}' "${BASE}/api/auth/login" | grep -i '^Set-Cookie:' || true)
+if echo "$SC" | grep -qi 'HttpOnly'; then ok "Session cookie 帶 HttpOnly"; else fail "Session cookie 缺少 HttpOnly：$SC"; fi
+if echo "$SC" | grep -qi 'SameSite=Lax'; then ok "Session cookie 帶 SameSite=Lax"; else fail "Session cookie 缺少 SameSite=Lax：$SC"; fi
+
+# ═════════════════════════════════════════════════════════════════
 section "5. 帳號管理 API"
 # ═════════════════════════════════════════════════════════════════
 

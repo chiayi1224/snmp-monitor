@@ -31,6 +31,7 @@ import java.util.Set;
  *   LOGIN_SUCCESS / LOGIN_FAIL / LOGOUT → 由 AuthServlet 記錄
  *   TOKEN_USED / TOKEN_FAIL             → 本 Filter 記錄
  *   API_WRITE（admin POST/PUT/DELETE）  → 本 Filter 記錄
+ *   CSRF_BLOCKED（跨站或非 JSON 的寫入） → 本 Filter 記錄
  */
 public class AuthFilter implements Filter {
 
@@ -163,6 +164,20 @@ public class AuthFilter implements Filter {
                 return;
             }
             request.setAttribute("audit_actor", actor);
+
+            // ── CSRF 防護：Session cookie 驗證的寫入請求必須同源且為 JSON ──
+            if (path.startsWith("/api/")) {
+                CsrfGuard.Result csrf = CsrfGuard.check(request);
+                if (csrf != CsrfGuard.Result.OK) {
+                    store.saveAuditLog("CSRF_BLOCKED", actor, ip, method, rawUri, 403, StoredText.encode(Msg.of("audit.csrf_blocked")));
+                    if (csrf == CsrfGuard.Result.CROSS_ORIGIN) {
+                        sendError(response, 403, Msg.of("auth.csrf_cross_origin"));
+                    } else {
+                        sendError(response, 415, Msg.of("auth.csrf_content_type"));
+                    }
+                    return;
+                }
+            }
 
             // ── 強制改密碼（must_change）伺服器端強制 ──────────────────
             // 安全要點：must_change 必須在伺服器端把關，不能只靠前端導向。

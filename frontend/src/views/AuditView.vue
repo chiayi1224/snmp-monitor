@@ -8,7 +8,7 @@ import type { AuditLog } from '../api/types'
 import { fmtTime } from '../utils/format'
 
 const { t } = useI18n()
-const EVENTS = ['LOGIN_SUCCESS', 'LOGIN_FAIL', 'LOGOUT', 'TOKEN_USED', 'TOKEN_FAIL', 'API_WRITE', 'SESSION_REVOKED', 'MUST_CHANGE_BLOCKED']
+const EVENTS = ['LOGIN_SUCCESS', 'LOGIN_FAIL', 'LOGOUT', 'TOKEN_USED', 'TOKEN_FAIL', 'API_WRITE', 'SESSION_REVOKED', 'MUST_CHANGE_BLOCKED', 'CSRF_BLOCKED']
 
 const eventType = ref<string>('')
 const rows = ref<AuditLog[]>([])

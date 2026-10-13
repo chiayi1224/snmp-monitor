@@ -31,6 +31,8 @@ class AuthFilterTest {
     @BeforeEach
     void setUp() {
         filter = new AuthFilter(store);
+        // 一般請求預設為 JSON；CSRF 相關測試再覆寫
+        lenient().when(req.getContentType()).thenReturn("application/json");
     }
 
     /**
@@ -105,6 +107,146 @@ class AuthFilterTest {
         when(session.getAttribute("user")).thenReturn(Map.of("username", "admin"));
 
         filter.doFilter(req, resp, chain);
+        verify(chain).doFilter(req, resp);
+    }
+
+    // ─── CSRF 防護 ────────────────────────────────────────────────
+
+    private void sessionWrite(String method, String path) {
+        stubPath(path);
+        when(req.getMethod()).thenReturn(method);
+        lenient().when(req.getHeader("Host")).thenReturn("monitor:8080");
+        when(req.getSession(false)).thenReturn(session);
+        when(session.getAttribute("user")).thenReturn(Map.of("id", 1L, "username", "admin"));
+    }
+
+    @Test
+    void CSRF_跨站Origin的寫入請求回403() throws Exception {
+        sessionWrite("POST", "/api/admin/users");
+        lenient().when(req.getHeader("Origin")).thenReturn("http://evil.example");
+        when(resp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_FORBIDDEN);
+        verify(chain, never()).doFilter(req, resp);
+        verify(store).saveAuditLog(eq("CSRF_BLOCKED"), eq("admin"), any(), eq("POST"), any(), eq(403), any());
+    }
+
+    @Test
+    void CSRF_Origin為null字串一律拒絕() throws Exception {
+        sessionWrite("POST", "/api/admin/users");
+        lenient().when(req.getHeader("Origin")).thenReturn("null");
+        when(resp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(HttpServletResponse.SC_FORBIDDEN);
+        verify(chain, never()).doFilter(req, resp);
+    }
+
+    @Test
+    void CSRF_同源Origin放行() throws Exception {
+        sessionWrite("POST", "/api/admin/users");
+        lenient().when(req.getHeader("Origin")).thenReturn("http://monitor:8080");
+
+        filter.doFilter(req, resp, chain);
+
+        verify(chain).doFilter(req, resp);
+    }
+
+    @Test
+    void CSRF_沒有Origin的非瀏覽器客戶端放行() throws Exception {
+        sessionWrite("POST", "/api/admin/users");
+
+        filter.doFilter(req, resp, chain);
+
+        verify(chain).doFilter(req, resp);
+    }
+
+    @Test
+    void CSRF_表單用text_plain的寫入請求回415() throws Exception {
+        sessionWrite("POST", "/api/admin/users");
+        when(req.getContentType()).thenReturn("text/plain");
+        when(resp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(415);
+        verify(chain, never()).doFilter(req, resp);
+    }
+
+    @Test
+    void CSRF_沒有Content_Type的POST回415() throws Exception {
+        sessionWrite("POST", "/api/admin/discovery/scans");
+        when(req.getContentType()).thenReturn(null);
+        when(resp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+
+        filter.doFilter(req, resp, chain);
+
+        verify(resp).setStatus(415);
+        verify(chain, never()).doFilter(req, resp);
+    }
+
+    @Test
+    void CSRF_帶charset的JSON放行() throws Exception {
+        sessionWrite("PUT", "/api/admin/settings");
+        when(req.getContentType()).thenReturn("application/json; charset=UTF-8");
+
+        filter.doFilter(req, resp, chain);
+
+        verify(chain).doFilter(req, resp);
+    }
+
+    @Test
+    void CSRF_DELETE沒有body也放行_跨站則被擋() throws Exception {
+        sessionWrite("DELETE", "/api/admin/devices/R1");
+        filter.doFilter(req, resp, chain);
+        verify(chain).doFilter(req, resp);
+
+        reset(chain);
+        lenient().when(req.getHeader("Origin")).thenReturn("http://evil.example");
+        when(resp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+        filter.doFilter(req, resp, chain);
+        verify(chain, never()).doFilter(req, resp);
+    }
+
+    @Test
+    void CSRF_GET不檢查() throws Exception {
+        sessionWrite("GET", "/api/admin/users");
+        lenient().when(req.getHeader("Origin")).thenReturn("http://evil.example");
+
+        filter.doFilter(req, resp, chain);
+
+        verify(chain).doFilter(req, resp);
+    }
+
+    @Test
+    void CSRF_mustChange的改密碼請求同樣檢查() throws Exception {
+        stubPath("/api/admin/users/1/password");
+        when(req.getMethod()).thenReturn("PUT");
+        lenient().when(req.getHeader("Host")).thenReturn("monitor:8080");
+        lenient().when(req.getHeader("Origin")).thenReturn("http://evil.example");
+        when(req.getSession(false)).thenReturn(session);
+        when(session.getAttribute("user")).thenReturn(mustChangeUser(1));
+        when(resp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+
+        filter.doFilter(req, resp, chain);
+
+        verify(chain, never()).doFilter(req, resp);
+    }
+
+    @Test
+    void CSRF_BearerToken請求不受影響() throws Exception {
+        stubPath("/api/v1/status");
+        when(req.getMethod()).thenReturn("POST");
+        when(req.getHeader("Authorization")).thenReturn("Bearer tok");
+        when(req.getHeader("X-Forwarded-For")).thenReturn(null);
+        when(req.getRemoteAddr()).thenReturn("127.0.0.1");
+        when(store.validateApiToken("tok")).thenReturn(Map.of("description", "grafana"));
+
+        filter.doFilter(req, resp, chain);
+
         verify(chain).doFilter(req, resp);
     }
 

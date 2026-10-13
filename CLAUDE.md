@@ -98,6 +98,7 @@ JettyServer (8080) ◄───────────────────�
 - Filter 順序：`LocaleFilter`（依 `Accept-Language` 設定本次請求語系）→ `StaticCacheFilter`（`/`、`/index.html` 設 `no-cache`；`/assets/*` 長期快取）→ `AuthFilter`。
 - 網頁介面是 `frontend/` 的 Vue 3 + Naive UI 單頁應用（hash 路由），由 `DefaultServlet` 提供 JAR 內的 `static/`。`AuthFilter` 放行前端外殼（`/`、`/index.html`、`/favicon.ico`、`/assets/*`）與 `/api/auth/login`、`/api/info`；其餘非 API 路徑（含舊的 `/login.html`）未登入時導向 `/`，登入、改密碼畫面由前端路由處理。資料一律經需要認證的 API 取得。
 - Session 超時 1 小時，支援 `must_change` 旗標強制首次登入改密碼；`must_change` 在 `AuthFilter` 伺服器端強制，該 session 只能呼叫 `/api/auth/me`、`/api/auth/logout` 與修改自己的密碼。
+- CSRF 防護（`CsrfGuard`，由 `AuthFilter` 對 Session 驗證的 `/api/` 非 GET 請求套用）：有 `Origin` 標頭時必須與 `Host` 同源（否則 403，稽核 `CSRF_BLOCKED`）；POST／PUT／PATCH 的 `Content-Type` 必須是 `application/json`（否則 415）。Bearer Token 請求不受影響；前端 `api()` 本來就符合。Session cookie 設為 `HttpOnly`＋`SameSite=Lax`（`JettyServer`）。新增非 JSON 的寫入端點（例如檔案上傳）時須另行處理。
 - 帳號管理（`UserServlet`）：新增／修改／刪除帳號與修改他人密碼僅限 `admin`；不能變更自己的角色、停用或刪除自己。admin 重設他人密碼會設定該帳號 `must_change`；自己改密碼則清除。
 - 強制踢出：`SessionRevocation`（記憶體內、遞增序號）由 `JettyServer` 建立並共用給 `AuthFilter`、`AuthServlet`、`UserServlet`。重設他人密碼、修改或刪除他人帳號時撤銷該帳號既有 session，下一個請求回 401（頁面導回登入頁）；自己改密碼不撤銷。
 - 所有 API servlet 繼承 `BaseJsonServlet`，以 Jackson 序列化回應；錯誤用 `writeError(resp, status, Msg.of(...))`、成功訊息用 `t("代碼", 參數…)`。

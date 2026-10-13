@@ -6,6 +6,7 @@ import io.github.chiayi1224.simplesnmp.profile.ProfileCollector;
 import io.github.chiayi1224.simplesnmp.storage.MetricStore;
 import io.github.chiayi1224.simplesnmp.trap.TrapReceiver;
 import io.github.chiayi1224.simplesnmp.web.servlet.*;
+import org.eclipse.jetty.http.HttpCookie;
 import org.eclipse.jetty.server.*;
 import org.eclipse.jetty.servlet.DefaultServlet;
 import org.eclipse.jetty.servlet.FilterHolder;
@@ -82,6 +83,10 @@ public class JettyServer {
         ServletContextHandler ctx = new ServletContextHandler(
             ServletContextHandler.SESSIONS);
         ctx.setContextPath("/");
+
+        // Session cookie：禁止腳本讀取，且跨站請求不附帶（CSRF 的第二道防線）
+        ctx.getSessionHandler().setHttpOnly(true);
+        ctx.getSessionHandler().setSameSite(HttpCookie.SameSite.LAX);
 
         // ── 認證 Filter ────────────────────────────────────────────
         // Filter、登入與帳號管理共用同一份 session 撤銷登記（強制踢出）
