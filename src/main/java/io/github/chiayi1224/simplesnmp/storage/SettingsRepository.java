@@ -50,8 +50,8 @@ final class SettingsRepository {
             log.error("Failed to seed default settings: {}", ex.getMessage());
         }
 
-        seedIfAbsent("https_enabled",     "false",        seedDescription("https_enabled"));
-        seedIfAbsent("https_port",        "8443",         seedDescription("https_port"));
+        seedIfAbsent("https_enabled",     "true",         seedDescription("https_enabled"));
+        seedIfAbsent("https_port",        "9090",         seedDescription("https_port"));
         seedIfAbsent("keystore_path",     "keystore.jks", seedDescription("keystore_path"));
         seedIfAbsent("keystore_password", "changeit",     seedDescription("keystore_password"));
         seedIfAbsent("trap_communities",  "*",            seedDescription("trap_communities"));

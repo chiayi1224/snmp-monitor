@@ -30,7 +30,8 @@ fail()    { echo -e "${RED}[FAIL]${RESET} $*"; FAIL=$((FAIL+1)); }
 warn()    { echo -e "${YELLOW}[WARN]${RESET} $*"; }
 section() { echo -e "\n${BOLD}══ $* ══${RESET}"; }
 
-BASE="http://localhost:8080"
+BASE="https://localhost:9090"          # HTTPS 預設啟用（自簽憑證）
+HTTP_BASE="http://localhost:8080"       # 明文埠只負責轉址到 HTTPS
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 JAR="${SCRIPT_DIR}/target/simplesnmp-1.0.0.jar"
 # 測試用 JAR 複製到暫存目錄執行：DB 與 logs 都在暫存目錄，不會動到 run.sh 使用的 target/snmp_monitor.db
@@ -38,6 +39,11 @@ WORK_DIR=""
 DB_FILE=""
 COOKIE_JAR="/tmp/snmp-test-cookies.txt"
 cd "${SCRIPT_DIR}"
+
+# 自簽憑證：讓所有 curl 呼叫略過憑證驗證（只作用於本腳本）
+CURL_HOME_DIR="$(mktemp -d /tmp/snmp-test-curl.XXXXXX)"
+echo "insecure" > "${CURL_HOME_DIR}/.curlrc"
+export CURL_HOME="$CURL_HOME_DIR"
 
 # ── 清理函式 ──────────────────────────────────────────────────────
 cleanup() {
@@ -54,6 +60,7 @@ cleanup() {
     rm -rf "$WORK_DIR"
   fi
   rm -f "$COOKIE_JAR"
+  rm -rf "$CURL_HOME_DIR"
 }
 trap cleanup EXIT
 
@@ -129,8 +136,8 @@ section "2. 啟動伺服器"
 rm -f "$COOKIE_JAR"
 
 # 8080 已有服務在執行（例如 run.sh 啟動的實例）時不可繼續，否則測試會打到正式資料
-if curl -s -o /dev/null --max-time 2 "${BASE}/api/info"; then
-  fail "${BASE} 已有服務在執行，請先停止後再測試（測試不會動到它的資料庫，但會與它搶用埠口）"
+if curl -s -o /dev/null --max-time 2 "${BASE}/api/info" || curl -s -o /dev/null --max-time 2 "${HTTP_BASE}/api/info"; then
+  fail "${BASE} 或 ${HTTP_BASE} 已有服務在執行，請先停止後再測試（測試不會動到它的資料庫，但會與它搶用埠口）"
   exit 1
 fi
 
@@ -162,6 +169,15 @@ if [[ "$READY" == "false" ]]; then
   fail "伺服器未在 20 秒內就緒"
   exit 1
 fi
+
+# ═════════════════════════════════════════════════════════════════
+section "2-0. HTTPS 預設啟用"
+# ═════════════════════════════════════════════════════════════════
+REDIR=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "${HTTP_BASE}/api/info?x=1")
+if [[ "$REDIR" == "307 ${BASE}/api/info?x=1" ]]; then ok "HTTP 以 307 轉址到 HTTPS"; else fail "HTTP 未轉址到 HTTPS：$REDIR"; fi
+REDIR=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin"}' "${HTTP_BASE}/api/auth/login")
+if [[ "$REDIR" == "307" ]]; then ok "HTTP 的登入請求不會被處理"; else fail "HTTP 登入應回 307，實際 $REDIR"; fi
 
 # ═════════════════════════════════════════════════════════════════
 section "2-1. 網頁介面（前端外殼與快取）"
@@ -276,6 +292,7 @@ assert_status "清除測試帳號" 200
 
 SC=$(curl -s -D - -o /dev/null -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"Admin@123"}' "${BASE}/api/auth/login" | grep -i '^Set-Cookie:' || true)
+if echo "$SC" | grep -qi 'Secure'; then ok "Session cookie 帶 Secure"; else fail "Session cookie 缺少 Secure：$SC"; fi
 if echo "$SC" | grep -qi 'HttpOnly'; then ok "Session cookie 帶 HttpOnly"; else fail "Session cookie 缺少 HttpOnly：$SC"; fi
 if echo "$SC" | grep -qi 'SameSite=Lax'; then ok "Session cookie 帶 SameSite=Lax"; else fail "Session cookie 缺少 SameSite=Lax：$SC"; fi
 

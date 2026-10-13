@@ -51,8 +51,8 @@ public class SnmpMonitor {
         int     webPort        = store.getSettingInt ("web_port",              8080);
         int     trapPort       = store.getSettingInt ("trap_port",             1162);
         int     pollInterval   = store.getSettingInt ("poll_interval_seconds", 60);
-        boolean httpsEnabled   = store.getSettingBool("https_enabled",         false);
-        int     httpsPort      = store.getSettingInt ("https_port",            8443);
+        boolean httpsEnabled   = store.getSettingBool("https_enabled",         true);
+        int     httpsPort      = store.getSettingInt ("https_port",            9090);
         String  keystoreFile   = store.getSetting    ("keystore_path",         "keystore.jks");
         String  keystorePass   = store.getSetting    ("keystore_password",     "changeit");
         Path    keystorePath   = dataDir.resolve(keystoreFile);

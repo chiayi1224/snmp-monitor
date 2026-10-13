@@ -8,6 +8,7 @@ import io.github.chiayi1224.simplesnmp.trap.TrapReceiver;
 import io.github.chiayi1224.simplesnmp.web.servlet.*;
 import org.eclipse.jetty.http.HttpCookie;
 import org.eclipse.jetty.server.*;
+import org.eclipse.jetty.server.handler.HandlerList;
 import org.eclipse.jetty.servlet.DefaultServlet;
 import org.eclipse.jetty.servlet.FilterHolder;
 import org.eclipse.jetty.servlet.ServletContextHandler;
@@ -54,15 +55,24 @@ public class JettyServer {
     public void start() throws Exception {
         server = new Server();
 
+        // HTTPS 預設啟用；憑證無法建立（例如執行環境沒有 keytool）時退回 HTTP，避免整個服務起不來
+        boolean https = httpsEnabled;
+        if (https) {
+            try {
+                ensureKeystore();
+            } catch (Exception e) {
+                log.error("Cannot prepare the HTTPS KeyStore, falling back to HTTP only: {}", e.getMessage());
+                https = false;
+            }
+        }
+
         // ── HTTP connector ─────────────────────────────────────────
         ServerConnector httpConnector = new ServerConnector(server);
         httpConnector.setPort(httpPort);
         server.addConnector(httpConnector);
 
         // ── HTTPS connector（選用）────────────────────────────────
-        if (httpsEnabled) {
-            ensureKeystore();
-
+        if (https) {
             SslContextFactory.Server sslCtx = new SslContextFactory.Server();
             sslCtx.setKeyStorePath(keystorePath.toString());
             sslCtx.setKeyStorePassword(keystorePassword);
@@ -134,7 +144,17 @@ public class JettyServer {
             ctx.addServlet(staticHolder, "/");
         }
 
-        server.setHandler(ctx);
+        if (https) {
+            // 明文 HTTP 一律轉址到 HTTPS（Session cookie 在 HTTPS 下會自動帶 Secure 旗標）
+            HandlerList handlers = new HandlerList();
+            handlers.addHandler(new HttpsRedirectHandler(httpsPort));
+            handlers.addHandler(ctx);
+            server.setHandler(handlers);
+        } else {
+            log.warn("HTTPS is disabled: session cookies and API tokens are sent in cleartext. "
+                + "Enable it with the https_enabled setting, or put a TLS-terminating reverse proxy in front");
+            server.setHandler(ctx);
+        }
         server.start();
         log.info("Web server started: http://localhost:{}", httpPort);
     }

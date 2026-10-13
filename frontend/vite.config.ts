@@ -19,8 +19,9 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    // 開發時把 API 轉給本機的 Jetty（java -jar target/simplesnmp-1.0.0.jar）
-    proxy: { '/api': 'http://localhost:8080' },
+    // 開發時把 API 轉給本機的 Jetty（java -jar target/simplesnmp-1.0.0.jar）。
+    // 新資料庫預設啟用 HTTPS（9090，自簽憑證）；舊資料庫若仍是 HTTP，改用 VITE_API_TARGET=http://localhost:8080
+    proxy: { '/api': { target: process.env.VITE_API_TARGET ?? 'https://localhost:9090', secure: false } },
   },
   test: {
     environment: 'jsdom',

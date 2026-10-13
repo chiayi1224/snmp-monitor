@@ -69,7 +69,7 @@ npm run build   # 型別檢查 + 建置到 frontend/dist
 
 ### 第一次使用
 
-1. 開啟瀏覽器：`http://localhost:8080`
+1. 開啟瀏覽器：`https://localhost:9090`（`http://localhost:8080` 會自動轉址；自簽憑證需略過瀏覽器警告，詳見下方「HTTPS」）
 2. 用預設帳號登入：`admin / admin`
 3. 系統強制要求修改密碼（規則：8字元以上、含大寫、含數字）
 4. 到「設備管理」頁面新增要監控的 Linux Server
@@ -103,8 +103,8 @@ iptables -t nat -A PREROUTING -p udp --dport 162 -j REDIRECT --to-port 1162
 
 v1 / v2c 的 community 可用設定 `trap_communities` 限制（逗號分隔，預設 `*` 代表全部接受）：
 ```bash
-curl -X PUT -H 'Content-Type: application/json' -d '{"value":"public,monitor"}' \
-  http://localhost:8080/api/admin/settings/trap_communities
+curl -k -X PUT -H 'Content-Type: application/json' -d '{"value":"public,monitor"}' \
+  https://localhost:9090/api/admin/settings/trap_communities
 ```
 
 設備端 `snmpd.conf`：
@@ -179,6 +179,17 @@ trap2sink 192.168.1.100:1162 trapUser
 資料庫使用 SQLite **WAL 模式**，執行中會多出 `snmp_monitor.db-wal`、`snmp_monitor.db-shm` 兩個檔案。
 執行中備份請用 `sqlite3 snmp_monitor.db ".backup backup.db"`；若直接複製檔案，必須在程式停止後進行，
 或連同 `-wal` 檔一起複製，否則可能遺漏最近寫入的資料。
+
+### HTTPS
+
+新資料庫**預設啟用 HTTPS**（`https_enabled=true`、`https_port=9090`，兩者都可在「系統設定」修改，重新啟動後生效）：
+
+1. 首次啟動會在資料目錄自動建立自簽憑證（`keystore_path`，密碼為 `keystore_password`），瀏覽器會出現憑證警告；正式環境請換成自己的憑證。若無法建立憑證（例如環境沒有 `keytool`），會記錄錯誤並退回 HTTP。
+2. HTTP 埠（`web_port`，預設 8080）的所有請求會以 307 轉址到 HTTPS，Session cookie 自動帶 `Secure`。外部程式請直接改用 `https://…:9090`（轉址前的第一個請求仍是明文，Token 不要再送到 HTTP）。
+3. **從舊版升級**：既有資料庫保留原本的設定（`https_enabled=false`、`https_port=8443`），不會被改成 HTTPS，也不影響既有的使用方式；要啟用請自行修改這兩項設定。
+
+關閉 HTTPS 時，啟動 log 會出現警告。若已有反向代理負責 TLS，可維持 HTTP，但須自行確保代理到本程式之間的網路可信。
+不主動送出 HSTS：預設的自簽憑證在瀏覽器顯示憑證警告時，HSTS 會讓使用者無法手動略過而被鎖在門外；換成受信任憑證後可在反向代理加上 HSTS。
 
 ## 多語系
 
